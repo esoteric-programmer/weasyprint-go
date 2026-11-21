@@ -172,6 +172,8 @@ type Options struct {
 	// DefaultPageSize is the page size in CSS px of pages whose size the
 	// document's CSS doesn't set (default A4). See PageSize.
 	DefaultPageSize [2]float64
+	// PDFOptions are used when writing the document as PDF.
+	PDFOptions
 }
 
 // PageSize parses a CSS page size such as "A4", "A5 landscape", "letter"
@@ -190,10 +192,14 @@ type Document struct {
 	Pages    []*Page
 	Metadata Metadata
 
-	pages    []*layout.Page
-	shaper   *text.Shaper
-	images   *images.Cache
-	compress bool
+	pages         []*layout.Page
+	shaper        *text.Shaper
+	images        *images.Cache
+	compress      bool
+	fetcher       fetch.Fetcher
+	warn          func(string)
+	colorProfiles map[string]*draw.ColorProfile
+	pdfOptions    PDFOptions
 }
 
 // Page is a rendered page.
@@ -212,35 +218,84 @@ type Metadata struct {
 	Created     string
 	Modified    string
 	Lang        string
+	// Custom are the other <meta> names and contents, in document order.
+	Custom [][2]string
+	// Attachments are the files of <link rel=attachment> elements.
+	Attachments []Attachment
 }
 
-func (h *HTML) metadata() Metadata {
+// metadata extracts the metadata like WeasyPrint's get_html_metadata.
+func (h *HTML) metadata(warn func(string)) Metadata {
 	m := Metadata{}
-	if t := h.root.Find("title"); t != nil {
-		m.Title = strings.Join(strings.Fields(t.TextContent()), " ")
-	}
-	for _, meta := range h.root.FindAll("meta") {
-		name := strings.ToLower(meta.Get("name"))
-		content := strings.TrimSpace(meta.Get("content"))
-		switch name {
-		case "author":
-			m.Authors = append(m.Authors, content)
-		case "description":
-			m.Description = content
-		case "keywords":
-			for _, k := range strings.Split(content, ",") {
-				if k = strings.TrimSpace(k); k != "" {
-					m.Keywords = append(m.Keywords, k)
+	seen := map[string]bool{}
+	var title, description, generator, created, modified bool
+	h.root.Walk(func(n *html.Node) bool {
+		if n.Type != html.ElementNode {
+			return true
+		}
+		switch n.Tag {
+		case "title":
+			if !title {
+				title = true
+				m.Title = strings.Join(strings.Fields(n.TextContent()), " ")
+			}
+		case "meta":
+			name := strings.ToLower(n.Get("name"))
+			content := n.Get("content")
+			switch name {
+			case "keywords":
+				for _, k := range strings.Split(content, ",") {
+					k = strings.Trim(k, " \t\n\f\r")
+					dup := false
+					for _, e := range m.Keywords {
+						dup = dup || e == k
+					}
+					if !dup {
+						m.Keywords = append(m.Keywords, k)
+					}
+				}
+			case "author":
+				m.Authors = append(m.Authors, content)
+			case "description":
+				if !description {
+					description, m.Description = true, content
+				}
+			case "generator":
+				if !generator {
+					generator, m.Generator = true, content
+				}
+			case "dcterms.created", "dcterms.modified":
+				if !draw.ValidW3CDate(content) {
+					warn(fmt.Sprintf("Invalid date in <meta name=%q> %q", name, content))
+					break
+				}
+				if name == "dcterms.created" && !created {
+					created, m.Created = true, content
+				} else if name == "dcterms.modified" && !modified {
+					modified, m.Modified = true, content
+				}
+			case "":
+			default:
+				if !seen[name] {
+					seen[name] = true
+					m.Custom = append(m.Custom, [2]string{name, content})
 				}
 			}
-		case "generator":
-			m.Generator = content
-		case "dcterms.created":
-			m.Created = content
-		case "dcterms.modified":
-			m.Modified = content
+		case "link":
+			for _, t := range strings.Fields(strings.ToLower(n.Get("rel"))) {
+				if t == "attachment" {
+					if href := n.Get("href"); href != "" {
+						m.Attachments = append(m.Attachments, Attachment{
+							URL: fetch.Resolve(h.BaseURL, href), Description: n.Get("title")})
+					} else {
+						warn(`Missing href in <link rel="attachment">`)
+					}
+					break
+				}
+			}
 		}
-	}
+		return true
+	})
 	if r := h.root.Root(); r != nil {
 		m.Lang = r.Get("lang")
 	}
@@ -328,6 +383,9 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	env := &css.Env{Fetcher: fetcher, MediaType: media, Warn: warn}
 	ua := css.ParseStylesheet(css.UserAgentCSS(), "", css.OriginUA, env)
 	sheets := []*css.Stylesheet{ua}
+	if opts.Forms {
+		sheets = append(sheets, css.ParseStylesheet(css.FormsCSS(), "", css.OriginUA, env))
+	}
 	if opts.PresentationalHints {
 		ph := css.ParseStylesheet(css.PresentationalHintsCSS(), "", css.OriginAuthor, env)
 		for _, r := range ph.Rules {
@@ -395,7 +453,9 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 			layout.Dump(os.Stderr, p.Box, 0)
 		}
 	}
-	doc = &Document{Metadata: h.metadata(), pages: pages, shaper: shaper, images: imgs, compress: !opts.Uncompressed}
+	doc = &Document{Metadata: h.metadata(warn), pages: pages, shaper: shaper, images: imgs, compress: !opts.Uncompressed,
+		fetcher: fetcher, warn: warn, pdfOptions: opts.PDFOptions,
+		colorProfiles: loadColorProfiles(resolver.ColorProfiles, fetcher, warn)}
 	for _, p := range pages {
 		doc.Pages = append(doc.Pages, &Page{Width: p.Width, Height: p.Height})
 	}
@@ -480,15 +540,25 @@ func (d *Document) WritePDF(w io.Writer) (err error) {
 			err = fmt.Errorf("weasyprint: internal error while drawing: %v", r)
 		}
 	}()
-	m := d.Metadata
-	return draw.Write(w, d.pages, d.shaper, d.images, draw.Options{
-		Compress: d.compress,
-		Producer: "WeasyPrint-Go " + Version,
-		Metadata: draw.Metadata{
-			Title: m.Title, Authors: m.Authors, Description: m.Description, Keywords: m.Keywords,
-			Generator: m.Generator, Created: m.Created, Modified: m.Modified, Lang: m.Lang,
-		},
-	})
+	return d.WritePDFWithOptions(w, d.pdfOptions)
+}
+
+// WritePDFWithOptions writes the document as PDF with the given options
+// instead of those given to Render.
+func (d *Document) WritePDFWithOptions(w io.Writer, o PDFOptions) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if os.Getenv("WEASYPRINT_GO_DEBUG") != "" {
+				panic(r)
+			}
+			err = fmt.Errorf("weasyprint: internal error while drawing: %v", r)
+		}
+	}()
+	do, err := d.pdfDrawOptions(&o)
+	if err != nil {
+		return err
+	}
+	return draw.Write(w, d.pages, d.shaper, d.images, do)
 }
 
 // PDF returns the document as PDF bytes.

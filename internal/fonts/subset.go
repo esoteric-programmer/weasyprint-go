@@ -144,8 +144,11 @@ func (f *Font) compositeComponents(g int) []uint16 {
 }
 
 // Subset returns font data suitable for embedding, containing only the
-// given glyphs (glyph IDs are preserved). CFF fonts are returned whole.
-func (f *Font) Subset(glyphs map[uint16]bool) []byte {
+// given glyphs (glyph IDs are preserved). Like HarfBuzz's subsetter used
+// by WeasyPrint, glyphs after the last used one are removed, as well as
+// hinting unless hinting is set.
+func (f *Font) Subset(glyphs map[uint16]bool, hinting ...bool) []byte {
+	keepHinting := len(hinting) > 0 && hinting[0]
 	if f.IsCFF {
 		if cff, ok := f.tables["CFF "]; ok {
 			if sub, err := subsetCFF(cff, glyphs); err == nil {
@@ -185,7 +188,16 @@ func (f *Font) Subset(glyphs map[uint16]bool) []byte {
 			}
 		}
 	}
-	n := f.NumGlyphs
+	// Glyphs after the last used one are dropped.
+	n := 1
+	for g := range keep {
+		if int(g)+1 > n {
+			n = int(g) + 1
+		}
+	}
+	if n > f.NumGlyphs {
+		n = f.NumGlyphs
+	}
 	var newGlyf bytes.Buffer
 	loca := make([]byte, 4*(n+1))
 	for g := 0; g < n; g++ {
@@ -193,7 +205,11 @@ func (f *Font) Subset(glyphs map[uint16]bool) []byte {
 		if keep[uint16(g)] {
 			s, e := f.glyphRange(g)
 			if e > s && e <= len(glyf) {
-				newGlyf.Write(glyf[s:e])
+				data := glyf[s:e]
+				if !keepHinting {
+					data = stripInstructions(data)
+				}
+				newGlyf.Write(data)
 				for newGlyf.Len()%4 != 0 {
 					newGlyf.WriteByte(0)
 				}
@@ -205,22 +221,151 @@ func (f *Font) Subset(glyphs map[uint16]bool) []byte {
 		"glyf": newGlyf.Bytes(),
 		"loca": loca,
 	}
-	for _, t := range []string{"head", "hhea", "hmtx", "maxp", "cvt ", "fpgm", "prep", "OS/2", "name", "gasp"} {
+	copied := []string{"head", "hhea", "OS/2"}
+	if keepHinting {
+		copied = append(copied, "cvt ", "fpgm", "prep", "gasp")
+	}
+	for _, t := range copied {
 		if d, ok := f.tables[t]; ok {
 			tables[t] = d
 		}
+	}
+	if name := subsetName(f.tables["name"]); name != nil {
+		tables["name"] = name
 	}
 	head := append([]byte(nil), tables["head"]...)
 	if len(head) >= 52 {
 		binary.BigEndian.PutUint16(head[50:], 1)
 	}
 	tables["head"] = head
+	// Metrics of the kept glyphs.
+	if hhea, hmtx := f.tables["hhea"], f.tables["hmtx"]; len(hhea) >= 36 && hmtx != nil {
+		numH := int(u16(hhea, 34))
+		var mtx bytes.Buffer
+		for g := 0; g < n; g++ {
+			var adv, lsb uint16
+			if g < numH {
+				if 4*g+4 <= len(hmtx) {
+					adv, lsb = u16(hmtx, 4*g), u16(hmtx, 4*g+2)
+				}
+			} else if numH > 0 {
+				adv = u16(hmtx, 4*(numH-1))
+				if p := 4*numH + 2*(g-numH); p+2 <= len(hmtx) {
+					lsb = u16(hmtx, p)
+				}
+			}
+			binary.Write(&mtx, binary.BigEndian, [2]uint16{adv, lsb})
+		}
+		tables["hmtx"] = mtx.Bytes()
+		h := append([]byte(nil), hhea...)
+		binary.BigEndian.PutUint16(h[34:], uint16(n))
+		tables["hhea"] = h
+	}
+	if maxp := f.tables["maxp"]; len(maxp) >= 6 {
+		m := append([]byte(nil), maxp...)
+		binary.BigEndian.PutUint16(m[4:], uint16(n))
+		if !keepHinting && len(m) >= 32 {
+			// No instructions are left.
+			binary.BigEndian.PutUint16(m[26:], 0) // maxSizeOfInstructions
+		}
+		tables["maxp"] = m
+	}
 	if post := f.tables["post"]; len(post) >= 32 {
 		p := append([]byte(nil), post[:32]...)
 		binary.BigEndian.PutUint32(p[0:], 0x00030000)
 		tables["post"] = p
 	}
 	return buildSFNT([]byte{0, 1, 0, 0}, tables)
+}
+
+// stripInstructions removes the hinting instructions of a glyph.
+func stripInstructions(g []byte) []byte {
+	if len(g) < 10 {
+		return g
+	}
+	nc := int(int16(u16(g, 0)))
+	if nc >= 0 {
+		p := 10 + 2*nc
+		if p+2 > len(g) {
+			return g
+		}
+		il := int(u16(g, p))
+		if il == 0 || p+2+il > len(g) {
+			return g
+		}
+		out := make([]byte, 0, len(g)-il)
+		out = append(out, g[:p]...)
+		out = append(out, 0, 0)
+		return append(out, g[p+2+il:]...)
+	}
+	// Composite glyph: clear WE_HAVE_INSTRUCTIONS and drop them.
+	out := append([]byte(nil), g...)
+	p := 10
+	for p+4 <= len(out) {
+		flags := u16(out, p)
+		binary.BigEndian.PutUint16(out[p:], flags&^0x100)
+		p += 4
+		if flags&1 != 0 {
+			p += 4
+		} else {
+			p += 2
+		}
+		switch {
+		case flags&0x8 != 0:
+			p += 2
+		case flags&0x40 != 0:
+			p += 4
+		case flags&0x80 != 0:
+			p += 8
+		}
+		if flags&0x20 == 0 {
+			if flags&0x100 != 0 && p <= len(out) {
+				return out[:p]
+			}
+			break
+		}
+	}
+	return out
+}
+
+// subsetName keeps the English names 0 to 6 of a name table, like
+// HarfBuzz's default subsetting.
+func subsetName(name []byte) []byte {
+	if len(name) < 6 {
+		return nil
+	}
+	count := int(u16(name, 2))
+	strOff := int(u16(name, 4))
+	type rec struct {
+		hdr  [4]uint16
+		id   uint16
+		data []byte
+	}
+	var recs []rec
+	for i := 0; i < count; i++ {
+		p := 6 + 12*i
+		if p+12 > len(name) {
+			break
+		}
+		platform, encoding, lang, id := u16(name, p), u16(name, p+2), u16(name, p+4), u16(name, p+6)
+		length, off := int(u16(name, p+8)), int(u16(name, p+10))
+		if id > 6 || !(platform == 3 && lang == 0x409 || platform == 1 && lang == 0) {
+			continue
+		}
+		if strOff+off+length > len(name) {
+			continue
+		}
+		recs = append(recs, rec{[4]uint16{platform, encoding, lang, id}, id, name[strOff+off : strOff+off+length]})
+	}
+	var out, strs bytes.Buffer
+	binary.Write(&out, binary.BigEndian, [3]uint16{0, uint16(len(recs)), uint16(6 + 12*len(recs))})
+	for _, r := range recs {
+		binary.Write(&out, binary.BigEndian, r.hdr)
+		binary.Write(&out, binary.BigEndian, [2]uint16{uint16(len(r.data)), uint16(strs.Len())})
+		strs.Write(r.data)
+	}
+	out.Write(strs.Bytes())
+	return out.Bytes()
 }
 
 // CFFCIDs returns, for CID-keyed CFF fonts, the mapping from glyph IDs to

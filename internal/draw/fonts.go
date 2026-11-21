@@ -18,6 +18,8 @@ type fontEntry struct {
 	name   string
 	used   map[uint16]string // glyph → text
 	cidMap map[uint16]uint16
+	// full embeds the whole font (fonts used by form fields).
+	full bool
 }
 
 type fontManager struct {
@@ -79,13 +81,22 @@ func sanitizeName(s string) string {
 	return b.String()
 }
 
-func (fm *fontManager) finish(compress bool) {
+// fontOptions control font embedding.
+type fontOptions struct {
+	compress, full, hinting bool
+	// cidSet adds the CIDSet of fonts (PDF 1.4 and earlier, like
+	// WeasyPrint).
+	cidSet bool
+}
+
+func (fm *fontManager) finish(o fontOptions) {
 	for _, e := range fm.order {
-		fm.writeFont(e, compress)
+		fm.writeFont(e, o)
 	}
 }
 
-func (fm *fontManager) writeFont(e *fontEntry, compress bool) {
+func (fm *fontManager) writeFont(e *fontEntry, o fontOptions) {
+	compress := o.compress
 	f := e.font
 	gids := make([]int, 0, len(e.used))
 	glyphSet := map[uint16]bool{}
@@ -107,7 +118,12 @@ func (fm *fontManager) writeFont(e *fontEntry, compress bool) {
 	baseName := string(tag) + "+" + sanitizeName(f.PostScript)
 	k := 1000 / f.UnitsPerEm
 
-	data := f.Subset(glyphSet)
+	var data []byte
+	if o.full || e.full {
+		data = f.Standalone()
+	} else {
+		data = f.Subset(glyphSet, o.hinting)
+	}
 	var fileKey string
 	var fileStream *pdf.Stream
 	if f.IsCFF {
@@ -136,6 +152,20 @@ func (fm *fontManager) writeFont(e *fontEntry, compress bool) {
 		"CapHeight":   f.CapHeight * k,
 		"StemV":       80,
 		fileKey:       fileRef,
+	}
+	if o.cidSet && len(gids) > 0 {
+		maxCID := 0
+		for _, g := range gids {
+			if c := int(e.cid(uint16(g))); c > maxCID {
+				maxCID = c
+			}
+		}
+		bits := make([]byte, maxCID/8+1)
+		for _, g := range gids {
+			c := e.cid(uint16(g))
+			bits[c/8] |= 0x80 >> (c % 8)
+		}
+		fd["CIDSet"] = fm.doc.Add(&pdf.Stream{Dict: pdf.Dict{}, Data: bits, Compress: compress})
 	}
 	fdRef := fm.doc.Add(fd)
 

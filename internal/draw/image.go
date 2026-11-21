@@ -82,6 +82,10 @@ func (cv *canvas) paintImage(im *images.Image, x, y, w, h float64) {
 
 // drawReplaced draws the content of a replaced box with object-fit.
 func (cv *canvas) drawReplaced(b *layout.Box) {
+	cv.marked(b, "Figure", func() { cv.drawReplacedContent(b) })
+}
+
+func (cv *canvas) drawReplacedContent(b *layout.Box) {
 	if b.Image == nil || b.Style.Kw(css.PVisibility) != "visible" {
 		return
 	}

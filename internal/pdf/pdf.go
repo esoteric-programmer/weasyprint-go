@@ -7,6 +7,8 @@ package pdf
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -239,33 +241,152 @@ func Serialize(v any) []byte {
 	return b.Bytes()
 }
 
+// WriteOptions control how a document is written.
+type WriteOptions struct {
+	// Identifier is the first file identifier. When nil and AutoID is
+	// set, the hash of the file is used. No identifier is written when
+	// both are unset.
+	Identifier []byte
+	AutoID     bool
+	// Compress stores objects in a compressed object stream with a
+	// cross-reference stream when the version is 1.5 or later, like
+	// pydyf.
+	Compress bool
+}
+
+// VersionAtLeast reports whether version v is at least min ("1.5"...).
+func VersionAtLeast(v, min string) bool {
+	parse := func(s string) (int, int) {
+		maj, minr, _ := strings.Cut(s, ".")
+		a, _ := strconv.Atoi(maj)
+		b, _ := strconv.Atoi(minr)
+		return a, b
+	}
+	a1, b1 := parse(v)
+	a2, b2 := parse(min)
+	return a1 > a2 || (a1 == a2 && b1 >= b2)
+}
+
 // Write writes the complete PDF file. root and info are references to the
 // catalog and information dictionaries (info may be 0).
-func (d *Document) Write(out io.Writer, root, info Ref, id []byte) error {
+func (d *Document) Write(out io.Writer, root, info Ref, opts WriteOptions) error {
 	var w bytes.Buffer
-	fmt.Fprintf(&w, "%%PDF-%s\n%%\xf0\x9f\x96\xa4\n", d.Version)
-	offsets := make([]int, len(d.objects))
-	for i := 1; i < len(d.objects); i++ {
+	version := d.Version
+	if version == "" {
+		version = "1.7"
+	}
+	fmt.Fprintf(&w, "%%PDF-%s\n%%\xf0\x9f\x96\xa4\n", version)
+	n := len(d.objects)
+	data := make([][]byte, n)
+	for i := 1; i < n; i++ {
+		data[i] = Serialize(d.objects[i])
+	}
+	var id Array
+	if opts.Identifier != nil || opts.AutoID {
+		h := md5.New()
+		for i := 1; i < n; i++ {
+			h.Write(data[i])
+		}
+		hash := []byte(hex.EncodeToString(h.Sum(nil)))
+		first := opts.Identifier
+		if first == nil {
+			first = hash
+		}
+		id = Array{String(first), String(hash)}
+	}
+	if opts.Compress && VersionAtLeast(version, "1.5") {
+		return d.writeCompressed(out, &w, data, root, info, id)
+	}
+	offsets := make([]int, n)
+	for i := 1; i < n; i++ {
 		offsets[i] = w.Len()
 		fmt.Fprintf(&w, "%d 0 obj\n", i)
-		writeValue(&w, d.objects[i])
+		w.Write(data[i])
 		w.WriteString("\nendobj\n")
 	}
 	xref := w.Len()
-	fmt.Fprintf(&w, "xref\n0 %d\n0000000000 65535 f \n", len(d.objects))
-	for i := 1; i < len(d.objects); i++ {
+	fmt.Fprintf(&w, "xref\n0 %d\n0000000000 65535 f \n", n)
+	for i := 1; i < n; i++ {
 		fmt.Fprintf(&w, "%010d 00000 n \n", offsets[i])
 	}
-	trailer := Dict{"Size": len(d.objects), "Root": root}
+	trailer := Dict{"Size": n, "Root": root}
 	if info != 0 {
 		trailer["Info"] = info
 	}
 	if id != nil {
-		trailer["ID"] = Array{HexString(id), HexString(id)}
+		trailer["ID"] = id
 	}
 	w.WriteString("trailer\n")
 	writeValue(&w, trailer)
 	fmt.Fprintf(&w, "\nstartxref\n%d\n%%%%EOF\n", xref)
+	_, err := out.Write(w.Bytes())
+	return err
+}
+
+// writeCompressed writes the objects that are not streams in an object
+// stream, and a cross-reference stream.
+func (d *Document) writeCompressed(out io.Writer, w *bytes.Buffer, data [][]byte, root, info Ref, id Array) error {
+	n := len(data)
+	type entry struct{ kind, a, b int }
+	xref := make([]entry, n+2)
+	xref[0] = entry{0, 0, 65535}
+	var objStm bytes.Buffer
+	var header []string
+	k := 0
+	for i := 1; i < n; i++ {
+		switch d.objects[i].(type) {
+		case *Stream, *Content:
+			xref[i] = entry{1, w.Len(), 0}
+			fmt.Fprintf(w, "%d 0 obj\n", i)
+			w.Write(data[i])
+			w.WriteString("\nendobj\n")
+		default:
+			header = append(header, strconv.Itoa(i), strconv.Itoa(objStm.Len()))
+			objStm.Write(data[i])
+			objStm.WriteByte('\n')
+			xref[i] = entry{2, n, k}
+			k++
+		}
+	}
+	// Object stream (number n), then cross-reference stream (n + 1).
+	head := strings.Join(header, " ")
+	stm := &Stream{Dict: Dict{"Type": Name("ObjStm"), "N": k, "First": len(head) + 1},
+		Data: append([]byte(head+"\n"), objStm.Bytes()...), Compress: true}
+	xref[n] = entry{1, w.Len(), 0}
+	fmt.Fprintf(w, "%d 0 obj\n", n)
+	writeValue(w, stm)
+	w.WriteString("\nendobj\n")
+	xrefPos := w.Len()
+	xref[n+1] = entry{1, xrefPos, 0}
+	size := func(v int) int {
+		s := 1
+		for v >= 256 {
+			v >>= 8
+			s++
+		}
+		return s
+	}
+	w2, w3 := size(xrefPos), size(max(k, 65535))
+	var rows bytes.Buffer
+	for _, e := range xref {
+		rows.WriteByte(byte(e.kind))
+		for s := w2 - 1; s >= 0; s-- {
+			rows.WriteByte(byte(e.a >> (8 * s)))
+		}
+		for s := w3 - 1; s >= 0; s-- {
+			rows.WriteByte(byte(e.b >> (8 * s)))
+		}
+	}
+	dict := Dict{"Type": Name("XRef"), "Index": Array{0, n + 2}, "W": Array{1, w2, w3}, "Size": n + 2, "Root": root}
+	if info != 0 {
+		dict["Info"] = info
+	}
+	if id != nil {
+		dict["ID"] = id
+	}
+	fmt.Fprintf(w, "%d 0 obj\n", n+1)
+	writeValue(w, &Stream{Dict: dict, Data: rows.Bytes(), Compress: true})
+	fmt.Fprintf(w, "\nendobj\nstartxref\n%d\n%%%%EOF\n", xrefPos)
 	_, err := out.Write(w.Bytes())
 	return err
 }

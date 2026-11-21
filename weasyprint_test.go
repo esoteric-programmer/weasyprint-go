@@ -29,7 +29,7 @@ func render(t *testing.T, src string, opts *Options) (*Document, []byte) {
 }
 
 func TestSimpleDocument(t *testing.T) {
-	doc, pdf := render(t, `<title>Test title</title><meta name=author content="Jane Doe"><h1>Hello</h1><p>World</p>`, nil)
+	doc, pdf := render(t, `<title>Test title</title><meta name=author content="Jane Doe"><h1>Hello</h1><p>World</p>`, &Options{Uncompressed: true})
 	if len(doc.Pages) != 1 {
 		t.Fatalf("got %d pages, want 1", len(doc.Pages))
 	}
@@ -178,7 +178,7 @@ func TestFootnotes(t *testing.T) {
 }
 
 func TestLinksAndBookmarks(t *testing.T) {
-	_, pdf := render(t, `<h1 id="top">Title</h1><h2>Sub</h2><p><a href="#top">internal</a> <a href="https://example.com/">external</a></p>`, nil)
+	_, pdf := render(t, `<h1 id="top">Title</h1><h2>Sub</h2><p><a href="#top">internal</a> <a href="https://example.com/">external</a></p>`, &Options{Uncompressed: true})
 	for _, want := range []string{"/Subtype /Link", "/URI (https://example.com/)", "/Dest /top", "/Outlines", "/Title (Sub)"} {
 		if !bytes.Contains(pdf, []byte(want)) {
 			t.Errorf("missing %q", want)
@@ -336,5 +336,31 @@ func TestTextOverflowEllipsis(t *testing.T) {
 	_, pdf = render(t, strings.Replace(src, "overflow:hidden;", "", 1), &Options{Uncompressed: true})
 	if bytes.Contains(pdf, []byte("<2026>")) {
 		t.Errorf("ellipsis drawn for visible overflow")
+	}
+}
+
+func TestPDFOptions(t *testing.T) {
+	src := `<html lang="en"><title>T</title><h1>Title</h1><p>Text <a href="https://example.com">link</a></p><img alt="x" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="><form><input name=n value=v></form></html>`
+	check := func(opts PDFOptions, wants ...string) {
+		t.Helper()
+		o := &Options{Uncompressed: true, PDFOptions: opts}
+		_, pdf := render(t, src, o)
+		for _, want := range wants {
+			if !bytes.Contains(pdf, []byte(want)) {
+				t.Errorf("%+v: missing %q", opts, want)
+			}
+		}
+	}
+	check(PDFOptions{Variant: "pdf/a-3b"}, "%PDF-1.7", "/GTS_PDFA1", `pdfaid:part="3" pdfaid:conformance="B"`, "/ID [(", "/OutputIntents", "/DestOutputProfile")
+	check(PDFOptions{Variant: "pdf/a-1b"}, "%PDF-1.4", "/CIDSet", `pdfaid:part="1"`)
+	check(PDFOptions{Variant: "pdf/ua-1"}, "/StructTreeRoot", "/MarkInfo", "/S /H1", "/S /Figure", "/Alt (x)", "/MCID 0", `pdfuaid:part="1"`)
+	check(PDFOptions{Version: "1.6", Identifier: "abc"}, "%PDF-1.6", "/ID [(abc) (")
+	check(PDFOptions{Tags: true}, "/S /Link", "/OBJR", "/StructParents 0", "/Artifact BMC")
+	check(PDFOptions{Forms: true}, "/AcroForm", "/FT /Tx", "/V (v)")
+	check(PDFOptions{Attachments: []Attachment{{Data: []byte("hello"), Name: "h.txt", Relationship: "Data"}}, Variant: "pdf/a-3u"},
+		"/EmbeddedFiles", "/UF (h.txt)", "/AFRelationship /Data", "/AF [")
+	_, err := HTMLFromString(src, "").PDF(&Options{PDFOptions: PDFOptions{Variant: "pdf/z"}})
+	if err == nil {
+		t.Errorf("no error for an unknown variant")
 	}
 }

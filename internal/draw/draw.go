@@ -1,13 +1,11 @@
 package draw
 
 import (
-	"crypto/md5"
 	"fmt"
 	"io"
 	"math"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/images"
@@ -26,6 +24,8 @@ type Metadata struct {
 	Created     string
 	Modified    string
 	Lang        string
+	// Custom are the other <meta> names and contents, in document order.
+	Custom [][2]string
 }
 
 // Options controls PDF output.
@@ -34,6 +34,41 @@ type Options struct {
 	Metadata Metadata
 	// Producer is written in the document information dictionary.
 	Producer string
+	// Version is the PDF version ("1.7" by default).
+	Version string
+	// Identifier is the file identifier; AutoIdentifier uses a hash of
+	// the file instead.
+	Identifier     []byte
+	AutoIdentifier bool
+	// Variant is a PDF variant name (see Variants), or "".
+	Variant string
+	// Tags enables tagged PDF.
+	Tags bool
+	// Forms includes PDF form fields for form controls.
+	Forms bool
+	// CustomMetadata writes custom <meta> elements in the information
+	// dictionary.
+	CustomMetadata bool
+	// XMPMetadata are XML fragments added to the XMP metadata.
+	XMPMetadata [][]byte
+	// OutputIntent is "srgb", "device-cmyk" or the name of a profile of
+	// ColorProfiles, or "".
+	OutputIntent  string
+	ColorProfiles map[string]*ColorProfile
+	// Attachments are embedded in the PDF.
+	Attachments []Attachment
+	// FetchAttachment loads files of <a rel=attachment> links.
+	FetchAttachment func(url string) (Attachment, bool)
+	// Warn receives warnings.
+	Warn func(string)
+	// Image options: lossless optimization, JPEG re-encoding quality
+	// (0 to keep images) and maximum resolution (0 to keep it).
+	OptimizeImages bool
+	JPEGQuality    int
+	DPI            float64
+	// Font options: embed whole fonts, keep hinting.
+	FullFonts bool
+	Hinting   bool
 }
 
 type anchorPos struct {
@@ -53,6 +88,7 @@ type pendingLink struct {
 	rect [4]float64 // in PDF points
 	link *css.LinkValue
 	page int
+	box  *layout.Box
 }
 
 // Renderer writes pages into a PDF document.
@@ -70,6 +106,9 @@ type Renderer struct {
 	nobj        int
 	images      *images.Cache
 	propagated  map[*layout.Box]bool
+	written     []writtenAttachment
+	tags        *tagState
+	forms       *formState
 }
 
 // Write renders pages to w as a PDF file.
@@ -77,6 +116,9 @@ func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.
 	r := &Renderer{doc: pdf.NewDocument(), shaper: shaper, imgRefs: map[*images.Image]pdf.Ref{}, colorGlyphs: map[colorGlyphKey]*images.Image{},
 		anchors: map[string]anchorPos{}, opts: opts, images: imgs, propagated: map[*layout.Box]bool{}}
 	r.fm = newFontManager(r.doc)
+	if opts.Tags {
+		r.tags = newTagState(len(pages))
+	}
 	pagesRef := r.doc.Reserve()
 	for range pages {
 		r.pageRefs = append(r.pageRefs, r.doc.Reserve())
@@ -90,9 +132,9 @@ func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.
 		r.drawPage(i, p, pagesRef)
 	}
 	_ = annots
-	r.fm.finish(opts.Compress)
 	// Links.
 	pageAnnots := make([]pdf.Array, len(pages))
+	annotFiles := map[string]pdf.Ref{}
 	for _, l := range r.links {
 		a := pdf.Dict{
 			"Type":    pdf.Name("Annot"),
@@ -100,7 +142,24 @@ func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.
 			"Rect":    []float64{l.rect[0], l.rect[1], l.rect[2], l.rect[3]},
 			"Border":  pdf.Array{0, 0, 0},
 		}
-		if l.link.Internal {
+		if !l.link.Internal && isAttachmentLink(l.box) {
+			// <a rel=attachment>: embed the file in an annotation.
+			spec, ok := annotFiles[l.link.Target]
+			if !ok && opts.FetchAttachment != nil {
+				if att, ok := opts.FetchAttachment(l.link.Target); ok {
+					att.Name = l.box.Element.Get("download")
+					spec = r.writeAttachment(att).ref
+				}
+				annotFiles[l.link.Target] = spec
+			}
+			if spec == 0 {
+				continue
+			}
+			rc := []float64{l.rect[0], l.rect[1], l.rect[2], l.rect[3]}
+			ap := r.doc.Add(&pdf.Stream{Dict: pdf.Dict{"Type": pdf.Name("XObject"), "Subtype": pdf.Name("Form"), "BBox": rc}, Compress: opts.Compress})
+			a = pdf.Dict{"Type": pdf.Name("Annot"), "Rect": rc, "Subtype": pdf.Name("FileAttachment"),
+				"T": pdf.String(""), "FS": spec, "AP": pdf.Dict{"N": ap}, "AS": pdf.Name("N")}
+		} else if l.link.Internal {
 			if _, ok := r.anchors[l.link.Target]; !ok {
 				continue
 			}
@@ -108,7 +167,16 @@ func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.
 		} else {
 			a["A"] = pdf.Dict{"Type": pdf.Name("Action"), "S": pdf.Name("URI"), "URI": pdf.String(l.link.Target)}
 		}
-		pageAnnots[l.page] = append(pageAnnots[l.page], r.doc.Add(a))
+		ref := r.doc.Add(a)
+		pageAnnots[l.page] = append(pageAnnots[l.page], ref)
+		if r.tags != nil && a["Subtype"] == pdf.Name("Link") {
+			r.tags.linkAnnots[l.page][l.box] = append(r.tags.linkAnnots[l.page][l.box], ref)
+		}
+	}
+	if opts.Forms {
+		for i, p := range pages {
+			r.addForms(i, p, nil, &pageAnnots[i])
+		}
 	}
 	for i, ref := range r.pageRefs {
 		d := r.doc.Get(ref).(pdf.Dict)
@@ -116,6 +184,8 @@ func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.
 			d["Annots"] = pageAnnots[i]
 		}
 	}
+	r.fm.finish(fontOptions{compress: opts.Compress, full: opts.FullFonts, hinting: opts.Hinting,
+		cidSet: opts.Version != "" && !pdf.VersionAtLeast(opts.Version, "1.5")})
 	kids := make(pdf.Array, len(r.pageRefs))
 	for i, ref := range r.pageRefs {
 		kids[i] = ref
@@ -143,34 +213,75 @@ func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.
 	if opts.Metadata.Lang != "" {
 		catalog["Lang"] = pdf.String(opts.Metadata.Lang)
 	}
-	rootRef := r.doc.Add(catalog)
 	info := r.infoDict()
-	infoRef := r.doc.Add(info)
-	h := md5.New()
-	fmt.Fprintf(h, "%v %d", opts.Metadata.Title, len(pages))
-	return r.doc.Write(w, rootRef, infoRef, h.Sum(nil))
+	// Embedded files.
+	var embedded pdf.Array
+	for _, a := range opts.Attachments {
+		w := r.writeAttachment(a)
+		embedded = append(embedded, r.doc.Get(w.ref).(pdf.Dict)["F"], w.ref)
+	}
+	if len(embedded) > 0 {
+		catalog["Names"] = pdf.Dict{"EmbeddedFiles": r.doc.Add(pdf.Dict{"Names": embedded})}
+	}
+	if r.forms != nil {
+		r.forms.acro["Fields"] = r.forms.fields
+		catalog["AcroForm"] = r.forms.acro
+	}
+	if r.tags != nil {
+		r.addTags(catalog, pages)
+	}
+	r.addOutputIntent(catalog)
+	if v, ok := Variants[opts.Variant]; ok {
+		var annots []pdf.Ref
+		for _, a := range pageAnnots {
+			for _, ref := range a {
+				annots = append(annots, ref.(pdf.Ref))
+			}
+		}
+		r.applyVariant(v, catalog, info, annots)
+	}
+	rootRef := r.doc.Add(catalog)
+	var infoRef pdf.Ref
+	if len(info) > 0 {
+		infoRef = r.doc.Add(info)
+	}
+	r.doc.Version = opts.Version
+	return r.doc.Write(w, rootRef, infoRef, pdf.WriteOptions{
+		Identifier: opts.Identifier, AutoID: opts.AutoIdentifier, Compress: opts.Compress})
 }
 
-func pdfDate(s string) pdf.String {
-	if s == "" {
-		return pdf.String(time.Now().UTC().Format("D:20060102150405Z"))
+// addOutputIntent adds the output intent and its ICC profile, like
+// WeasyPrint.
+func (r *Renderer) addOutputIntent(catalog pdf.Dict) {
+	profiles := r.opts.ColorProfiles
+	intent := r.opts.OutputIntent
+	var p *ColorProfile
+	switch {
+	case intent == "srgb":
+		p = SRGBProfile()
+	case profiles[intent] != nil:
+		p = profiles[intent]
+	case profiles["device-cmyk"] != nil:
+		p = profiles["device-cmyk"]
 	}
-	for _, layoutStr := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02", "2006-01", "2006"} {
-		if t, err := time.Parse(layoutStr, s); err == nil {
-			return pdf.String(t.UTC().Format("D:20060102150405Z"))
-		}
+	if p == nil {
+		return
 	}
-	return pdf.String(s)
+	profile := r.doc.Add(&pdf.Stream{Dict: pdf.Dict{"N": p.Components}, Data: p.Data, Compress: r.opts.Compress})
+	subtype := "GTS_PDFX"
+	if strings.Contains(r.opts.Variant, "pdf/a") {
+		subtype = "GTS_PDFA1"
+	}
+	catalog["OutputIntents"] = pdf.Array{pdf.Dict{
+		"Type": pdf.Name("OutputIntent"), "S": pdf.Name(subtype),
+		"OutputConditionIdentifier": pdf.String(p.Name), "Info": pdf.String(p.Name),
+		"DestOutputProfile": profile,
+	}}
 }
 
 func (r *Renderer) infoDict() pdf.Dict {
 	m := r.opts.Metadata
-	d := pdf.Dict{}
-	producer := r.opts.Producer
-	if producer == "" {
-		producer = "WeasyPrint-Go"
-	}
-	d["Producer"] = pdf.String(producer)
+	d := pdf.Dict{"Producer": pdf.String(r.producer())}
 	if m.Title != "" {
 		d["Title"] = pdf.String(m.Title)
 	}
@@ -186,8 +297,25 @@ func (r *Renderer) infoDict() pdf.Dict {
 	if m.Generator != "" {
 		d["Creator"] = pdf.String(m.Generator)
 	}
-	d["CreationDate"] = pdfDate(m.Created)
-	d["ModDate"] = pdfDate(m.Modified)
+	if date, ok := w3cDateToPDF(m.Created); ok {
+		d["CreationDate"] = pdf.String(date)
+	}
+	if date, ok := w3cDateToPDF(m.Modified); ok {
+		d["ModDate"] = pdf.String(date)
+	}
+	if r.opts.CustomMetadata {
+		for _, kv := range m.Custom {
+			key := strings.Map(func(c rune) rune {
+				if c < 0x80 && (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+					return c
+				}
+				return -1
+			}, kv[0])
+			if key != "" {
+				d[key] = pdf.String(kv[1])
+			}
+		}
+	}
 	return d
 }
 
@@ -389,20 +517,27 @@ func (r *Renderer) drawPage(pi int, p *layout.Page, parent pdf.Ref) {
 	page := p.Box
 	// Page background, then the root (canvas) background over the whole page.
 	full := rect{0, 0, p.Width, p.Height}
-	cv.drawBackgroundStyle(page.Style, page, &full, nil)
-	if root, rootStyle := r.canvasBackgroundSource(page); rootStyle != nil {
-		cv.drawBackgroundStyle(rootStyle, root, &full, page)
-	}
-	cv.drawBorders(page)
+	cv.artifact(func() {
+		cv.drawBackgroundStyle(page.Style, page, &full, nil)
+		if root, rootStyle := r.canvasBackgroundSource(page); rootStyle != nil {
+			cv.drawBackgroundStyle(rootStyle, root, &full, page)
+		}
+		cv.drawBorders(page)
+	})
 	cv.paintLayers(page, true)
 	contentRef := r.doc.Add(cv.c)
-	r.doc.Set(r.pageRefs[pi], pdf.Dict{
+	pd := pdf.Dict{
 		"Type":      pdf.Name("Page"),
 		"Parent":    parent,
 		"MediaBox":  []float64{0, 0, wPt, hPt},
 		"Contents":  contentRef,
 		"Resources": cv.resources(),
-	})
+	}
+	if r.tags != nil {
+		pd["Tabs"] = pdf.Name("S")
+		pd["StructParents"] = pi
+	}
+	r.doc.Set(r.pageRefs[pi], pd)
 }
 
 // canvasBackgroundSource returns the box whose background is propagated to
@@ -605,7 +740,7 @@ func (cv *canvas) paintBlocks(b *layout.Box, isRoot bool) {
 				cv.paintBlocks(ch, false)
 			}
 		})
-		cv.drawCollapsedBorders(b)
+		cv.artifact(func() { cv.drawCollapsedBorders(b) })
 		return
 	}
 	cv.withClip(b, isRoot, func() {
@@ -614,7 +749,7 @@ func (cv *canvas) paintBlocks(b *layout.Box, isRoot bool) {
 		}
 	})
 	if len(b.Children) > 1 && b.Children[0].IsColumn {
-		cv.drawColumnRules(b)
+		cv.artifact(func() { cv.drawColumnRules(b) })
 	}
 }
 
@@ -660,10 +795,10 @@ func (cv *canvas) paintInlines(b *layout.Box, isRoot bool, decos []decoration) {
 	}
 	switch b.Kind {
 	case layout.KText:
-		cv.drawText(b, decos)
+		cv.marked(b, "Span", func() { cv.drawText(b, decos) })
 		return
 	case layout.KLeader:
-		cv.drawLeader(b)
+		cv.marked(b, "Span", func() { cv.drawLeader(b) })
 		return
 	case layout.KInline:
 		cv.backgroundAndBorder(b)
@@ -707,7 +842,7 @@ func (cv *canvas) paintOutlines(b *layout.Box, isRoot bool) {
 		return
 	}
 	if b.Style != nil && b.Kind != layout.KText && b.Kind != layout.KLine {
-		cv.drawOutline(b)
+		cv.artifact(func() { cv.drawOutline(b) })
 	}
 	for _, ch := range b.Children {
 		cv.paintOutlines(ch, false)
@@ -725,21 +860,25 @@ func (cv *canvas) backgroundAndBorder(b *layout.Box) {
 		return
 	}
 	if b.Kind == layout.KRow || b.Kind == layout.KRowGroup || b.Kind == layout.KColGroup {
-		cv.drawBackground(b)
+		cv.artifact(func() { cv.drawBackground(b) })
 		return
 	}
-	cv.drawBoxShadows(b, false)
-	if !cv.r.propagated[b.Original()] {
-		cv.drawBackground(b)
-	}
-	cv.drawBoxShadows(b, true)
+	cv.artifact(func() {
+		cv.drawBoxShadows(b, false)
+		if !cv.r.propagated[b.Original()] {
+			cv.drawBackground(b)
+		}
+		cv.drawBoxShadows(b, true)
+		if !((b.Kind == layout.KCell || b.Kind == layout.KTable) && b.Collapse != nil) {
+			cv.drawBorders(b)
+		}
+	})
 	if b.Kind == layout.KCell && b.Collapse != nil {
 		return
 	}
 	if b.Kind == layout.KTable && b.Collapse != nil {
 		return
 	}
-	cv.drawBorders(b)
 	if b.Kind == layout.KReplaced && b.IsInline {
 		cv.drawReplaced(b)
 	}
@@ -757,7 +896,7 @@ func (cv *canvas) addLink(b *layout.Box) {
 	}
 	cv.r.links = append(cv.r.links, pendingLink{
 		rect: [4]float64{x0 * 0.75, (cv.height - y1) * 0.75, x1 * 0.75, (cv.height - y0) * 0.75},
-		link: b.Link, page: cv.page,
+		link: b.Link, page: cv.page, box: b,
 	})
 }
 
@@ -849,4 +988,18 @@ func transformMatrix(b *layout.Box) []float64 {
 	}
 	m = mul(m, []float64{1, 0, 0, 1, -ox, -oy})
 	return m
+}
+
+// isAttachmentLink reports whether b is an <a> element with the
+// attachment link type.
+func isAttachmentLink(b *layout.Box) bool {
+	if b == nil || b.Element == nil || !strings.EqualFold(b.Element.Tag, "a") {
+		return false
+	}
+	for _, t := range strings.Fields(strings.ToLower(b.Element.Get("rel"))) {
+		if t == "attachment" {
+			return true
+		}
+	}
+	return false
 }

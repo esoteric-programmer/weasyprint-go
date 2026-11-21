@@ -82,6 +82,14 @@ type FontFaceRule struct {
 	Features     []FontFeature
 }
 
+// ColorProfileRule is an @color-profile rule.
+type ColorProfileRule struct {
+	// Name is "device-cmyk" or a dashed identifier.
+	Name            string
+	URL             string
+	RenderingIntent string
+}
+
 // FontSource is an item of the src descriptor.
 type FontSource struct {
 	URL    string
@@ -96,6 +104,7 @@ type Stylesheet struct {
 	PageRules     []*PageRule
 	FontFaces     []*FontFaceRule
 	CounterStyles map[string]*CounterStyle
+	ColorProfiles []*ColorProfileRule
 	BaseURL       string
 	// Layers are the cascade layers of the stylesheets parsed with the
 	// same Env, in priority order (shared between them).
@@ -402,6 +411,10 @@ func (sh *Stylesheet) addRules(rules []Rule, baseURL string, env *Env, depth int
 				if name != "none" && name != "decimal" && name != "disc" || sh.Origin == OriginUA {
 					sh.CounterStyles[name] = ParseCounterStyle(name, r.Content)
 				}
+			}
+		case "color-profile":
+			if cp := parseColorProfile(r, baseURL, env); cp != nil {
+				sh.ColorProfiles = append(sh.ColorProfiles, cp)
 			}
 		case "charset", "namespace":
 		default:
@@ -854,4 +867,40 @@ func evalMediaFeature(ts []Token, env *Env) bool {
 // DeclsFromString parses and validates a declaration block.
 func DeclsFromString(src, baseURL string) []Decl {
 	return preprocessDecls(ParseInlineDeclarations(src), &ParseCtx{BaseURL: baseURL}, &Env{})
+}
+
+func parseColorProfile(r Rule, baseURL string, env *Env) *ColorProfileRule {
+	prelude := RemoveWS(r.Prelude)
+	if len(prelude) != 1 || prelude[0].Type != TIdent ||
+		!(strings.HasPrefix(prelude[0].Value, "--") || prelude[0].Value == "device-cmyk") {
+		env.warn("Invalid color profile name, the whole @color-profile rule was ignored")
+		return nil
+	}
+	cp := &ColorProfileRule{Name: prelude[0].Value, RenderingIntent: "relative-colorimetric"}
+	decls, _ := ParseDeclarations(r.Content)
+	for _, d := range decls {
+		v := RemoveWS(d.Value)
+		switch d.Name {
+		case "src":
+			if len(v) == 1 && v[0].Type == TURL {
+				cp.URL = fetch.Resolve(baseURL, v[0].Value)
+			} else if len(v) == 1 && v[0].Type == TFunction && v[0].Value == "url" {
+				if args := RemoveWS(v[0].Children); len(args) == 1 && args[0].Type == TString {
+					cp.URL = fetch.Resolve(baseURL, args[0].Value)
+				}
+			}
+		case "rendering-intent":
+			if len(v) == 1 && v[0].Type == TIdent {
+				cp.RenderingIntent = v[0].Value
+			}
+		case "components":
+		default:
+			env.warn("Unknown descriptor " + d.Name + " for profile named " + cp.Name)
+		}
+	}
+	if cp.URL == "" {
+		env.warn("No source for profile named " + cp.Name + ", the whole @color-profile rule was ignored")
+		return nil
+	}
+	return cp
 }

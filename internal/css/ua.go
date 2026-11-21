@@ -20,3 +20,9 @@ func UserAgentCSS() string { return uaCSS + "\n" + uaExtraCSS }
 // PresentationalHintsCSS returns the stylesheet of presentational hints
 // that can be expressed in CSS.
 func PresentationalHintsCSS() string { return phCSS }
+
+//go:embed ua/html5_ua_form.css
+var formCSS string
+
+// FormsCSS returns the user agent stylesheet used for PDF forms.
+func FormsCSS() string { return formCSS }

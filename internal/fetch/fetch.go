@@ -3,7 +3,10 @@
 package fetch
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,16 +36,56 @@ const UserAgent = "WeasyPrint-Go (https://github.com/esoteric-programmer/weasypr
 // Timeout for HTTP requests.
 var Timeout = 10 * time.Second
 
+// Options configure a URL fetcher, like the arguments of WeasyPrint's
+// URLFetcher.
+type Options struct {
+	// Timeout of HTTP requests (default 10 seconds).
+	Timeout time.Duration
+	// AllowedProtocols are the URL schemes that may be fetched (all when
+	// empty).
+	AllowedProtocols []string
+	// NoRedirects disables following HTTP redirects.
+	NoRedirects bool
+	// FailOnErrors makes HTTP errors fatal: they are reported to
+	// OnFatal.
+	FailOnErrors bool
+	OnFatal      func(error)
+	// CacheDir stores fetched HTTP resources, reused on later fetches.
+	CacheDir string
+}
+
 // Default is the default URL fetcher.
-func Default(rawURL string) (*Result, error) {
+func Default(rawURL string) (*Result, error) { return fetchWith(rawURL, &Options{}) }
+
+// New returns a fetcher with the given options.
+func New(opts Options) Fetcher {
+	return func(u string) (*Result, error) { return fetchWith(u, &opts) }
+}
+
+func fetchWith(rawURL string, o *Options) (*Result, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	switch u.Scheme {
+	scheme := strings.ToLower(u.Scheme)
+	if scheme == "" {
+		scheme = "file"
+	}
+	if len(o.AllowedProtocols) > 0 {
+		allowed := false
+		for _, p := range o.AllowedProtocols {
+			if strings.EqualFold(strings.TrimSpace(p), scheme) {
+				allowed = true
+			}
+		}
+		if !allowed {
+			return nil, fmt.Errorf("URI uses disallowed protocol: %s", rawURL)
+		}
+	}
+	switch scheme {
 	case "data":
 		return fetchData(rawURL)
-	case "file", "":
+	case "file":
 		path := u.Path
 		if u.Scheme == "" {
 			path = rawURL
@@ -55,7 +98,17 @@ func Default(rawURL string) (*Result, error) {
 		mt, params, _ := mime.ParseMediaType(mt)
 		return &Result{Data: data, MimeType: mt, Encoding: params["charset"], RedirectURL: rawURL}, nil
 	case "http", "https":
-		client := &http.Client{Timeout: Timeout}
+		if r := readCache(o.CacheDir, rawURL); r != nil {
+			return r, nil
+		}
+		timeout := o.Timeout
+		if timeout <= 0 {
+			timeout = Timeout
+		}
+		client := &http.Client{Timeout: timeout}
+		if o.NoRedirects {
+			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		}
 		req, err := http.NewRequest("GET", rawURL, nil)
 		if err != nil {
 			return nil, err
@@ -63,20 +116,58 @@ func Default(rawURL string) (*Result, error) {
 		req.Header.Set("User-Agent", UserAgent)
 		resp, err := client.Do(req)
 		if err != nil {
+			if o.FailOnErrors && o.OnFatal != nil {
+				o.OnFatal(err)
+			}
 			return nil, err
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("HTTP %d for %s", resp.StatusCode, rawURL)
+		if resp.StatusCode >= 300 {
+			err := fmt.Errorf("HTTP %d for %s", resp.StatusCode, rawURL)
+			if o.FailOnErrors && o.OnFatal != nil {
+				o.OnFatal(err)
+			}
+			return nil, err
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
 		mt, params, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-		return &Result{Data: data, MimeType: mt, Encoding: params["charset"], RedirectURL: resp.Request.URL.String()}, nil
+		r := &Result{Data: data, MimeType: mt, Encoding: params["charset"], RedirectURL: resp.Request.URL.String()}
+		writeCache(o.CacheDir, rawURL, r)
+		return r, nil
 	}
 	return nil, fmt.Errorf("unsupported URL scheme %q", u.Scheme)
+}
+
+func cachePath(dir, rawURL string) string {
+	sum := sha256.Sum256([]byte(rawURL))
+	return filepath.Join(dir, hex.EncodeToString(sum[:]))
+}
+
+func readCache(dir, rawURL string) *Result {
+	if dir == "" {
+		return nil
+	}
+	data, err := os.ReadFile(cachePath(dir, rawURL))
+	if err != nil {
+		return nil
+	}
+	var r Result
+	if json.Unmarshal(data, &r) != nil {
+		return nil
+	}
+	return &r
+}
+
+func writeCache(dir, rawURL string, r *Result) {
+	if dir == "" {
+		return
+	}
+	if data, err := json.Marshal(r); err == nil && os.MkdirAll(dir, 0o755) == nil {
+		os.WriteFile(cachePath(dir, rawURL), data, 0o644)
+	}
 }
 
 func fetchData(raw string) (*Result, error) {

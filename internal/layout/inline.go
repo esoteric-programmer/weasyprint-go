@@ -563,7 +563,9 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 				if isCollapsibleSpace(item, r) && !hasContent {
 					continue
 				}
-				if !isSpace && x+w > maxX+1e-6 && hasContent {
+				if !isSpace && x+w > maxX+1e-6 && hasContent && maxX >= lineStartX {
+					// (A negative available width, from a huge text-indent,
+					// disables wrapping like in Pango.)
 					if last != nil {
 						return last.pos, false, waiting, false
 					}

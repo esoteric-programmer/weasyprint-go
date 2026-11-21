@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"runtime/pprof"
 	"strings"
+	"time"
 
 	weasyprint "github.com/esoteric-programmer/weasyprint-go"
 )
@@ -17,31 +19,89 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
+// cli holds the flag set and the names of the flags taking a value, used
+// to allow flags after the positional arguments.
+type cli struct {
+	fs     *flag.FlagSet
+	valued map[string]bool
+}
+
+func (c *cli) str(short, long, def, usage string) *string {
+	p := new(string)
+	*p = def
+	c.fs.StringVar(p, long, def, usage)
+	c.valued[long] = true
+	if short != "" {
+		c.fs.StringVar(p, short, def, usage)
+		c.valued[short] = true
+	}
+	return p
+}
+
+func (c *cli) boolean(short, long, usage string) *bool {
+	p := new(bool)
+	c.fs.BoolVar(p, long, false, usage)
+	if short != "" {
+		c.fs.BoolVar(p, short, false, usage)
+	}
+	return p
+}
+
+func (c *cli) multi(short, long, usage string) *multiFlag {
+	p := new(multiFlag)
+	c.fs.Var(p, long, usage)
+	c.valued[long] = true
+	if short != "" {
+		c.fs.Var(p, short, usage)
+		c.valued[short] = true
+	}
+	return p
+}
+
 func main() {
-	var stylesheets multiFlag
-	fs := flag.NewFlagSet("weasyprint", flag.ExitOnError)
+	c := &cli{fs: flag.NewFlagSet("weasyprint", flag.ExitOnError), valued: map[string]bool{}}
+	fs := c.fs
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: weasyprint [options] <input> <output>\n\n")
 		fmt.Fprintf(os.Stderr, "Render HTML (file path, URL or \"-\" for stdin) to PDF (path or \"-\" for stdout).\n\nOptions:\n")
 		fs.PrintDefaults()
 	}
-	encoding := fs.String("e", "", "character encoding of the input")
-	fs.StringVar(encoding, "encoding", "", "character encoding of the input")
-	fs.Var(&stylesheets, "s", "URL or path of a user CSS stylesheet (may be repeated)")
-	fs.Var(&stylesheets, "stylesheet", "URL or path of a user CSS stylesheet (may be repeated)")
-	media := fs.String("m", "print", "media type to use for @media")
-	fs.StringVar(media, "media-type", "print", "media type to use for @media")
-	baseURL := fs.String("u", "", "base for relative URLs in the HTML input")
-	fs.StringVar(baseURL, "base-url", "", "base for relative URLs in the HTML input")
-	hints := fs.Bool("p", false, "follow HTML presentational hints")
-	fs.BoolVar(hints, "presentational-hints", false, "follow HTML presentational hints")
-	pageSize := fs.String("page-size", "", "page size of all pages, overriding the document's CSS\n(\"A4\", \"A5 landscape\", \"letter\", \"210mm 297mm\"...)")
-	uncompressed := fs.Bool("uncompressed-pdf", false, "do not compress PDF content streams")
-	verbose := fs.Bool("v", false, "show warnings and information messages")
-	fs.BoolVar(verbose, "verbose", false, "show warnings and information messages")
-	quiet := fs.Bool("q", false, "hide logging messages")
-	fs.BoolVar(quiet, "quiet", false, "hide logging messages")
-	version := fs.Bool("version", false, "print the version number and exit")
+	info := c.boolean("i", "info", "print system information and exit")
+	version := c.boolean("", "version", "print the version number and exit")
+	// Rendering.
+	stylesheets := c.multi("s", "stylesheet", "URL or path of a user CSS stylesheet (may be repeated)")
+	attachments := c.multi("a", "attachment", "URL or path of a file to attach to the PDF (may be repeated)")
+	relationships := c.multi("", "attachment-relationship", "relationship of the attachment with the same position\n(Source, Data, Alternative, Supplement, Unspecified...; may be repeated)")
+	pdfIdentifier := c.str("", "pdf-identifier", "", "PDF file identifier")
+	pdfVariant := c.str("", "pdf-variant", "", "PDF variant to generate: "+strings.Join(weasyprint.PDFVariants(), ", "))
+	pdfVersion := c.str("", "pdf-version", "", "PDF version number")
+	pdfForms := c.boolean("", "pdf-forms", "include PDF forms")
+	pdfTags := c.boolean("", "pdf-tags", "tag PDF for accessibility")
+	uncompressed := c.boolean("", "uncompressed-pdf", "do not compress PDF content, mainly for debugging")
+	xmpMetadata := c.multi("", "xmp-metadata", "URL or path of an XML file to include in the XMP metadata (may be repeated)")
+	customMetadata := c.boolean("", "custom-metadata", "include custom HTML meta tags in PDF metadata")
+	outputIntent := c.str("", "output-intent", "", "srgb, device-cmyk or the name of an @color-profile rule used as output intent")
+	hints := c.boolean("p", "presentational-hints", "follow HTML presentational hints")
+	optimizeImages := c.boolean("", "optimize-images", "optimize size of embedded images with no quality loss")
+	jpegQuality := c.str("j", "jpeg-quality", "", "JPEG quality between 0 (worst) to 95 (best)")
+	dpi := c.str("D", "dpi", "", "set maximum resolution of images embedded in the PDF")
+	fullFonts := c.boolean("", "full-fonts", "embed unmodified font files when possible")
+	hinting := c.boolean("", "hinting", "keep hinting information in embedded fonts")
+	cache := c.str("c", "cache-folder", "", "store remote resources in a folder to reuse them in later renderings")
+	pageSize := c.str("", "page-size", "", "page size of all pages, overriding the document's CSS\n(\"A4\", \"A5 landscape\", \"letter\", \"210mm 297mm\"...)")
+	// Input.
+	encoding := c.str("e", "encoding", "", "character encoding of the input")
+	media := c.str("m", "media-type", "print", "media type to use for @media")
+	baseURL := c.str("u", "base-url", "", "base for relative URLs in the HTML input")
+	timeout := c.str("t", "timeout", "", "set timeout in seconds for HTTP requests")
+	allowed := c.str("", "allowed-protocols", "", "only authorize comma-separated list of protocols for fetching URLs")
+	noRedirects := c.boolean("", "no-http-redirects", "do not follow HTTP redirects")
+	failHTTP := c.boolean("", "fail-on-http-errors", "abort document rendering on any HTTP error")
+	// Logging.
+	verbose := c.boolean("v", "verbose", "show warnings and information messages")
+	debug := c.boolean("d", "debug", "show debugging messages")
+	quiet := c.boolean("q", "quiet", "hide logging messages")
+
 	// Reorder so that flags may follow positional arguments.
 	var flags, positional []string
 	args := os.Args[1:]
@@ -51,21 +111,27 @@ func main() {
 			positional = append(positional, a)
 			continue
 		}
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
 		flags = append(flags, a)
 		name := strings.TrimLeft(a, "-")
-		if !strings.Contains(name, "=") {
-			switch name {
-			case "e", "encoding", "s", "stylesheet", "m", "media-type", "u", "base-url", "page-size":
-				if i+1 < len(args) {
-					flags = append(flags, args[i+1])
-					i++
-				}
-			}
+		if !strings.Contains(name, "=") && c.valued[name] && i+1 < len(args) {
+			flags = append(flags, args[i+1])
+			i++
 		}
 	}
 	fs.Parse(flags)
 	if *version {
 		fmt.Println("WeasyPrint-Go version", weasyprint.Version)
+		return
+	}
+	if *info {
+		fmt.Println("System:", runtime.GOOS, runtime.GOARCH)
+		fmt.Println("Go version:", runtime.Version())
+		fmt.Println("WeasyPrint-Go version:", weasyprint.Version)
+		fmt.Println("PDF variants:", strings.Join(weasyprint.PDFVariants(), ", "))
 		return
 	}
 	positional = append(positional, fs.Args()...)
@@ -80,6 +146,29 @@ func main() {
 			defer pprof.StopCPUProfile()
 		}
 	}
+	fail := func(code int, err any) {
+		fmt.Fprintln(os.Stderr, "weasyprint:", err)
+		pprof.StopCPUProfile()
+		os.Exit(code)
+	}
+
+	// URL fetcher.
+	fo := weasyprint.FetcherOptions{NoHTTPRedirects: *noRedirects, FailOnHTTPErrors: *failHTTP, CacheDir: *cache}
+	if *timeout != "" {
+		var secs float64
+		if _, err := fmt.Sscan(*timeout, &secs); err != nil {
+			fail(2, "invalid timeout "+*timeout)
+		}
+		fo.Timeout = time.Duration(secs * float64(time.Second))
+	}
+	if *allowed != "" {
+		for _, p := range strings.Split(*allowed, ",") {
+			if p = strings.TrimSpace(strings.ToLower(p)); p != "" {
+				fo.AllowedProtocols = append(fo.AllowedProtocols, p)
+			}
+		}
+	}
+	fetcher, httpErr := weasyprint.NewURLFetcher(fo)
 
 	var doc *weasyprint.HTML
 	var err error
@@ -87,7 +176,7 @@ func main() {
 	case input == "-":
 		doc, err = weasyprint.HTMLFromReader(os.Stdin, *encoding, *baseURL)
 	case strings.Contains(input, "://"):
-		doc, err = weasyprint.HTMLFromURL(input, nil)
+		doc, err = weasyprint.HTMLFromURL(input, fetcher)
 	default:
 		var data []byte
 		data, err = os.ReadFile(input)
@@ -100,46 +189,90 @@ func main() {
 		}
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "weasyprint:", err)
-		os.Exit(1)
+		fail(1, err)
 	}
 	if *baseURL != "" && input != "-" && !strings.Contains(input, "://") {
 		doc.BaseURL = *baseURL
 	}
 	doc.MediaType = *media
+	doc.URLFetcher = fetcher
 	opts := &weasyprint.Options{PresentationalHints: *hints, Uncompressed: *uncompressed}
-	for _, s := range stylesheets {
+	for _, s := range *stylesheets {
 		var sheet *weasyprint.CSS
 		if strings.Contains(s, "://") {
-			sheet, err = weasyprint.CSSFromURL(s, nil)
+			sheet, err = weasyprint.CSSFromURL(s, fetcher)
 		} else {
 			sheet, err = weasyprint.CSSFromFile(s)
 		}
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "weasyprint:", err)
-			os.Exit(1)
+			fail(1, err)
 		}
 		opts.Stylesheets = append(opts.Stylesheets, sheet)
 	}
 	if *pageSize != "" {
 		if _, err := weasyprint.PageSize(*pageSize); err != nil {
-			fmt.Fprintln(os.Stderr, "weasyprint:", err)
-			os.Exit(2)
+			fail(2, err)
 		}
 		// Like a user stylesheet setting the size of all pages.
 		opts.Stylesheets = append(opts.Stylesheets,
 			weasyprint.CSSFromString("@page { size: "+*pageSize+" !important }", ""))
 	}
-	if *verbose && !*quiet {
+	// PDF options.
+	po := &opts.PDFOptions
+	po.Variant, po.Version, po.Identifier = *pdfVariant, *pdfVersion, *pdfIdentifier
+	po.Forms, po.Tags, po.CustomMetadata = *pdfForms, *pdfTags, *customMetadata
+	po.XMPMetadata, po.OutputIntent = *xmpMetadata, *outputIntent
+	po.OptimizeImages, po.FullFonts, po.Hinting = *optimizeImages, *fullFonts, *hinting
+	if *jpegQuality != "" {
+		if _, err := fmt.Sscan(*jpegQuality, &po.JPEGQuality); err != nil {
+			fail(2, "invalid JPEG quality "+*jpegQuality)
+		}
+	}
+	if *dpi != "" {
+		if _, err := fmt.Sscan(*dpi, &po.DPI); err != nil {
+			fail(2, "invalid DPI "+*dpi)
+		}
+	}
+	for i, a := range *attachments {
+		att := weasyprint.Attachment{URL: a}
+		if i < len(*relationships) {
+			att.Relationship = (*relationships)[i]
+		}
+		po.Attachments = append(po.Attachments, att)
+	}
+	if po.Variant != "" {
+		known := false
+		for _, v := range weasyprint.PDFVariants() {
+			known = known || v == strings.ToLower(po.Variant)
+		}
+		if !known {
+			fail(2, fmt.Sprintf("invalid --pdf-variant %q (choose from %s)", po.Variant, strings.Join(weasyprint.PDFVariants(), ", ")))
+		}
+	}
+	switch {
+	case *quiet:
+	case *verbose || *debug:
 		opts.Warn = func(msg string) { fmt.Fprintln(os.Stderr, "WARNING:", msg) }
-	} else if !*quiet {
+	default:
 		seen := map[string]bool{}
 		opts.Warn = func(msg string) {
-			if strings.HasPrefix(msg, "Failed") && !seen[msg] {
+			if (strings.HasPrefix(msg, "Failed") || strings.HasPrefix(msg, "Missing required") ||
+				strings.Contains(msg, "no required alt")) && !seen[msg] {
 				seen[msg] = true
 				fmt.Fprintln(os.Stderr, "ERROR:", msg)
 			}
 		}
+	}
+	start := time.Now()
+	rendered, err := doc.Render(opts)
+	if err == nil {
+		err = httpErr()
+	}
+	if err != nil {
+		fail(1, err)
+	}
+	if *debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: rendered %d pages in %v\n", len(rendered.Pages), time.Since(start))
 	}
 	var w io.Writer
 	if output == "-" {
@@ -147,14 +280,18 @@ func main() {
 	} else {
 		f, err := os.Create(output)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "weasyprint:", err)
-			os.Exit(1)
+			fail(1, err)
 		}
 		defer f.Close()
 		w = f
 	}
-	if err := doc.WritePDF(w, opts); err != nil {
-		fmt.Fprintln(os.Stderr, "weasyprint:", err)
-		os.Exit(1)
+	if err := rendered.WritePDF(w); err != nil {
+		fail(1, err)
+	}
+	if err := httpErr(); err != nil {
+		fail(1, err)
+	}
+	if *debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: done in %v\n", time.Since(start))
 	}
 }

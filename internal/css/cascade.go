@@ -26,6 +26,7 @@ type Resolver struct {
 	Sheets        []*Stylesheet
 	CounterStyles CounterStyles
 	FontFaces     []*FontFaceRule
+	ColorProfiles []*ColorProfileRule
 	PageRules     []*PageRule
 	BaseURL       string
 	Viewport      [2]float64
@@ -63,6 +64,7 @@ func NewResolver(doc *html.Node, sheets []*Stylesheet, baseURL string) *Resolver
 			r.CounterStyles[name] = cs
 		}
 		r.FontFaces = append(r.FontFaces, sh.FontFaces...)
+		r.ColorProfiles = append(r.ColorProfiles, sh.ColorProfiles...)
 		r.PageRules = append(r.PageRules, sh.PageRules...)
 		for _, rule := range sh.Rules {
 			for _, sel := range rule.Selectors {
