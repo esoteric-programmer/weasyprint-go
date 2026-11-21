@@ -92,7 +92,10 @@ linear/radial/repeating gradients, `attr()`, counters and
   `overflow` clipping.
 * Inline layout: line breaking (UAX #14 style), `white-space`,
   `text-align` including `justify`, `text-indent`, `letter-spacing`,
-  `word-spacing`, `text-transform`, soft hyphens, `overflow-wrap`,
+  `word-spacing`, `text-transform`, soft hyphens, automatic hyphenation
+  (`hyphens: auto` with the `lang` attribute, `hyphenate-character`,
+  `hyphenate-limit-chars`, `hyphenate-limit-zone`; dictionaries for about
+  50 languages are built in), `overflow-wrap`,
   `word-break`, `tab-size`, all `vertical-align` values, inline blocks,
   kerning and standard ligatures.
 * Floats and `clear`; relative, absolute and fixed positioning
@@ -114,7 +117,10 @@ margins, `:first`/`:left`/`:right`/`:blank`/`:nth()` and named pages
 `counter(pages)`, `break-before/after/inside` (incl. `left`/`right`/
 `recto`/`verso` with blank pages), `orphans`/`widows`, `string-set` and
 `string()`, running elements (`position: running()` / `element()`),
-`leader()`, `target-counter()`, `target-counters()`, `target-text()`.
+`leader()`, `target-counter()`, `target-counters()`, `target-text()`,
+footnotes (`float: footnote`, `::footnote-call`, `::footnote-marker`,
+the `footnote` counter, the `@footnote` area, `footnote-display`,
+`footnote-policy`).
 
 **PDF output**: embedded and subset fonts (TrueType and CFF, including
 CID-keyed CJK fonts) with `ToUnicode` maps for text extraction, JPEG
@@ -137,16 +143,18 @@ substitutes (Arial → Liberation Sans…) and synthetic bold/italic.
 * No complex text shaping: Arabic contextual forms, Indic scripts and
   bidirectional reordering are not implemented (Pango/HarfBuzz do this in
   WeasyPrint). Latin, Greek, Cyrillic and CJK text work well.
-* No automatic hyphenation (`hyphens: auto`); soft hyphens work.
+* Nonstandard hyphenation patterns that change letters (such as the
+  old German "ck" → "k-k") are not used.
 * WOFF2 web fonts are skipped (they require Brotli); variable fonts use
   their default instance.
-* Not implemented yet: footnotes (`float: footnote`), `::first-line` and
+* Not implemented yet: `::first-line` and
   `::first-letter`, PDF forms, attachments, PDF/A and PDF/UA variants,
   bleed and crop marks.
 * A few WeasyPrint quirks are intentionally not reproduced, e.g. the
-  near-black colors of `groove`/`ridge`/`inset`/`outset` borders and
-  files without a charset being decoded as Windows-1252 even when they
-  are valid UTF-8.
+  near-black colors of `groove`/`ridge`/`inset`/`outset` borders, files
+  without a charset being decoded as Windows-1252 even when they are
+  valid UTF-8, and a rounding error in WeasyPrint's footnote area that
+  often moves footnotes that fit to the next page.
 
 ## Architecture
 
@@ -158,6 +166,7 @@ substitutes (Arial → Liberation Sans…) and synthetic bold/italic.
 | `internal/css` | Tokenizer, parser, selectors, cascade, computed values, counter styles, UA stylesheet | `css/`, tinycss2, cssselect2 |
 | `internal/fonts` | OpenType parsing, system font library and matching, TrueType/CFF subsetting | fontconfig, fontTools |
 | `internal/text` | Shaping (cmap, kerning, ligatures, fallback) and line break opportunities | Pango, HarfBuzz |
+| `internal/hyphen` | Hyphenation patterns (Liang's algorithm) | Pyphen |
 | `internal/layout` | Box generation and anonymous boxes, block/inline/float/table/flex/grid/column/absolute/page layout | `formatting_structure/`, `layout/` |
 | `internal/draw` | Painting order, backgrounds, borders, text, images, SVG, links and bookmarks | `draw/`, `svg/`, `pdf/` |
 | `internal/pdf` | Low-level PDF objects and content streams | pydyf |
@@ -177,4 +186,7 @@ WEASYPRINT_GO_CPUPROFILE=cpu.prof weasyprint doc.html out.pdf
 BSD 3-Clause, like WeasyPrint. The user agent and presentational hints
 stylesheets in `internal/css/ua` come from WeasyPrint (see
 `internal/css/ua/LICENSE.weasyprint`), and the layout algorithms follow
-WeasyPrint's implementation.
+WeasyPrint's implementation. The hyphenation dictionaries in
+`internal/hyphen/dictionaries` come from Pyphen (LibreOffice/Hunspell
+patterns) and keep their own licenses, given in the README files next to
+them (mostly LGPL/MPL/GPL tri-licenses).

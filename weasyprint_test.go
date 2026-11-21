@@ -104,6 +104,77 @@ func TestTallRowsFlexGridSplitAcrossPages(t *testing.T) {
 	}
 }
 
+func TestAutomaticHyphenation(t *testing.T) {
+	src := `<html lang="en"><style>p { width: 60px; font-size: 12px; hyphens: auto }</style>
+<p>Internationalization representatives</p>`
+	doc, _ := render(t, src, nil)
+	hyphenated := 0
+	doc.pages[0].Box.Descendants(func(b *layout.Box) {
+		if b.Hyphen != "" {
+			hyphenated++
+		}
+	})
+	if hyphenated == 0 {
+		t.Error("no word was hyphenated")
+	}
+	// Without a language, or with hyphens: manual, words are not split.
+	for _, src := range []string{
+		`<style>p { width: 60px; font-size: 12px; hyphens: auto }</style><p>Internationalization representatives</p>`,
+		`<html lang="en"><style>p { width: 60px; font-size: 12px }</style><p>Internationalization representatives</p>`,
+	} {
+		doc, _ := render(t, src, nil)
+		doc.pages[0].Box.Descendants(func(b *layout.Box) {
+			if b.Hyphen != "" {
+				t.Errorf("unexpected hyphenation in %q", src)
+			}
+		})
+	}
+}
+
+func TestFootnotes(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`<style>@page { size: A6 } p { margin: 0; line-height: 20px; font-size: 10px } .fn { float: footnote }</style>`)
+	for i := 0; i < 40; i++ {
+		b.WriteString("<p>Line " + strconv.Itoa(i))
+		if i%10 == 0 {
+			b.WriteString(`<span class="fn">Note for line ` + strconv.Itoa(i) + `.</span>`)
+		}
+		b.WriteString("</p>")
+	}
+	doc, _ := render(t, b.String(), nil)
+	notes := 0
+	for _, p := range doc.pages {
+		var area *layout.Box
+		for _, ch := range p.Box.Children {
+			if strings.Contains(ch.AllText(), "Note for line") {
+				area = ch
+			}
+		}
+		if area == nil {
+			continue
+		}
+		content := p.Box.Children[0]
+		if bottom := content.Y + content.MarginHeight(); bottom > area.Y+1e-6 {
+			t.Errorf("page content (bottom %v) overlaps the footnote area (top %v)", bottom, area.Y)
+		}
+		for _, line := range regexp.MustCompile(`(\d+)\. Note for line (\d+)`).FindAllStringSubmatch(area.AllText(), -1) {
+			notes++
+			n, _ := strconv.Atoi(line[1])
+			l, _ := strconv.Atoi(line[2])
+			if n != l/10+1 {
+				t.Errorf("footnote %d is for line %d", n, l)
+			}
+			// The call is on the same page.
+			if !strings.Contains(content.AllText(), "Line "+line[2]+line[1]) {
+				t.Errorf("call of footnote %d not on its page", n)
+			}
+		}
+	}
+	if notes != 4 {
+		t.Errorf("got %d footnotes, want 4", notes)
+	}
+}
+
 func TestLinksAndBookmarks(t *testing.T) {
 	_, pdf := render(t, `<h1 id="top">Title</h1><h2>Sub</h2><p><a href="#top">internal</a> <a href="https://example.com/">external</a></p>`, nil)
 	for _, want := range []string{"/Subtype /Link", "/URI (https://example.com/)", "/Dest /top", "/Outlines", "/Title (Sub)"} {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
+	"github.com/esoteric-programmer/weasyprint-go/internal/hyphen"
 	"github.com/esoteric-programmer/weasyprint-go/internal/text"
 )
 
@@ -113,6 +114,9 @@ type flatItem struct {
 	match  int // for open: index of close; for close: index of open
 	wrap   bool
 	ws     string
+	// autoHyph maps automatic hyphenation points to the start of their
+	// word (rune indexes).
+	autoHyph map[int]int
 }
 
 type flatLine struct {
@@ -214,7 +218,9 @@ func (c *Context) flatten(line *Box) *flatLine {
 					}
 				}
 			}
-			// break-spaces / pre-wrap: allow breaking after spaces.
+			if it.wrap && it.box.Style.Kw(css.PHyphens) == "auto" {
+				addAutoHyphens(it)
+			}
 			prevWrap = it.wrap
 		} else {
 			it.breaks = []text.Break{global[o.start], global[o.start+1]}
@@ -398,6 +404,51 @@ func inlineEndEdge(b *Box, cbW float64) float64 {
 	return mr + s.BorderWidth(1) + s.Px(css.PPaddingRight, cbW)
 }
 
+// addAutoHyphens adds hyphenation opportunities to the words of a text
+// item, as WeasyPrint does with Pyphen for "hyphens: auto".
+func addAutoHyphens(it *flatItem) {
+	st := it.box.Style
+	lang, ok := st.Get(css.PLang).(css.Str)
+	if !ok || lang == "" {
+		return
+	}
+	dict := hyphen.ForLang(string(lang))
+	if dict == nil {
+		return
+	}
+	limits := css.LimitChars{5, 2, 2}
+	if l, ok := st.Get(css.PHyphenateLimitChars).(css.LimitChars); ok {
+		limits = l
+	}
+	runes := it.shaped.Runes
+	for i := 0; i < len(runes); {
+		if !hyphen.IsWordRune(runes[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(runes) && hyphen.IsWordRune(runes[j]) {
+			j++
+		}
+		// Words containing soft hyphens use them instead; words split
+		// across text boxes are not hyphenated.
+		soft := (i > 0 && runes[i-1] == 0xad) || (j < len(runes) && runes[j] == 0xad)
+		if !soft && j-i >= limits[0] {
+			for _, p := range dict.Positions(string(runes[i:j]), limits[1], limits[2]) {
+				if p <= 0 || p >= j-i || it.breaks[i+p] != text.BreakNone {
+					continue
+				}
+				if it.autoHyph == nil {
+					it.autoHyph = map[int]int{}
+				}
+				it.breaks[i+p] = text.BreakHyphen
+				it.autoHyph[i+p] = i
+			}
+		}
+		i = j
+	}
+}
+
 func (it *lineIterator) hyphenWidth(item *flatItem) float64 {
 	h := hyphenChar(item.box.Style)
 	if h == "" {
@@ -473,12 +524,24 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 					if b == text.BreakMandatory {
 						return it.endBefore(linePos{p.item, i}, start), true, waiting, false
 					}
-					if b == text.BreakAllowed || b == text.BreakHyphen {
+					if b == text.BreakAllowed {
 						bp := linePos{p.item, i}
 						if i == 0 {
 							bp = it.backOverOpens(bp, start)
 						}
-						last = &cand{bp, b == text.BreakHyphen}
+						last = &cand{bp, false}
+					} else if b == text.BreakHyphen && i > 0 {
+						// The hyphen must fit too; when nothing else
+						// does, the shortest part is used.
+						ok := true
+						if ws, auto := item.autoHyph[i]; auto {
+							space := maxX - (x - (item.shaped.Pos[i] - item.shaped.Pos[ws]))
+							zone := item.box.Style.Px(css.PHyphenateLimitZone, maxX-lineStartX)
+							ok = space > zone || space < 0
+						}
+						if ok && (x+it.hyphenWidth(item) <= maxX+1e-6 || last == nil) {
+							last = &cand{linePos{p.item, i}, true}
+						}
 					}
 				}
 				firstPos = false
@@ -545,7 +608,7 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 				}
 				// Doesn't fit: place it after the line.
 				it.c.excluded = it.c.excluded[:len(it.c.excluded)-1]
-				removePlaceholders([]*Box{nf}, it.abs, it.fixed)
+				it.c.removePlaceholders([]*Box{nf}, it.abs, it.fixed)
 				waiting = append(waiting, p.item)
 				placed[p.item] = nil
 			}
@@ -1227,10 +1290,10 @@ func (c *Context) layoutAtomic(orig *Box, cb *Box, cbi cbInfo) *Box {
 	}
 	mn, mx := minMaxWidth(box, cbi.W)
 	box.W = math.Max(mn, math.Min(mx, box.W))
-	savedBottom := c.PageBottom
+	savedBottom := c.saveBottom()
 	c.PageBottom = math.Inf(1)
 	res := c.blockContainerLayout(box, math.Inf(-1), nil, true, &absList{}, &absList{}, nil, false, cbi)
-	c.PageBottom = savedBottom
+	c.restoreBottom(savedBottom)
 	nb := res.box
 	if nb == nil {
 		nb = box

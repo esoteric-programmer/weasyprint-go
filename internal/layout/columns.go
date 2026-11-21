@@ -81,10 +81,16 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 	// layoutColumns tries to fit content in n columns of height h.
 	layoutColumns := func(h float64, commit bool) ([]*Box, Skip, float64) {
 		savedExcl := c.excluded
-		savedBottom := c.PageBottom
+		var snap *fnSnapshot
+		if !commit {
+			// Trial layouts must not keep their footnotes.
+			snap = c.footnoteSnapshot()
+		}
+		savedBottom := c.saveBottom()
 		c.PageBottom = top + h
 		defer func() {
-			c.PageBottom = savedBottom
+			c.restoreFootnotes(snap)
+			c.restoreBottom(savedBottom)
 			c.excluded = savedExcl
 		}()
 		var cols []*Box
@@ -120,34 +126,55 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 	var cols []*Box
 	var resume Skip
 	balance := s.Kw(css.PColumnFill) != "auto" || math.IsInf(maxH, 1)
-	if balance {
-		// Total height in a single column.
-		_, _, total := func() ([]*Box, Skip, float64) {
-			saved := n
-			n = 1
-			defer func() { n = saved }()
-			return layoutColumns(math.Inf(1), false)
-		}()
-		lo := total / float64(n)
-		hi := math.Min(total, maxH)
-		if lo > hi {
-			lo = hi
-		}
-		if _, rs, _ := layoutColumns(lo, false); rs == nil {
-			hi = lo
-		} else {
-			for i := 0; i < 16 && hi-lo > 0.5; i++ {
-				mid := (lo + hi) / 2
-				if _, rs, _ := layoutColumns(mid, false); rs == nil {
-					hi = mid
-				} else {
-					lo = mid
+	for attempt := 0; ; attempt++ {
+		snap := c.footnoteSnapshot()
+		c.beginColumns()
+		if balance {
+			// Total height in a single column.
+			_, _, total := func() ([]*Box, Skip, float64) {
+				saved := n
+				n = 1
+				defer func() { n = saved }()
+				return layoutColumns(math.Inf(1), false)
+			}()
+			lo := total / float64(n)
+			hi := math.Min(total, maxH)
+			if lo > hi {
+				lo = hi
+			}
+			if _, rs, _ := layoutColumns(lo, false); rs == nil {
+				hi = lo
+			} else {
+				for i := 0; i < 16 && hi-lo > 0.5; i++ {
+					mid := (lo + hi) / 2
+					if _, rs, _ := layoutColumns(mid, false); rs == nil {
+						hi = mid
+					} else {
+						lo = mid
+					}
 				}
 			}
+			cols, resume, _ = layoutColumns(hi, true)
+		} else {
+			cols, resume, _ = layoutColumns(maxH, true)
 		}
-		cols, resume, _ = layoutColumns(hi, true)
-	} else {
-		cols, resume, _ = layoutColumns(maxH, true)
+		c.endColumns()
+		// Footnotes called in the columns reduce the page height: lay the
+		// columns out again if they now overlap the footnote area.
+		if snap == nil || attempt >= 4 || math.IsInf(c.PageBottom, 1) {
+			break
+		}
+		used := 0.0
+		for _, col := range cols {
+			used = math.Max(used, col.H)
+		}
+		limit := c.PageBottom - bottomSpace - box.PB - box.BB - top
+		if used <= limit+1e-6 || c.fn.delta == snap.f.delta {
+			break
+		}
+		c.removePlaceholders(cols, abs, fixed)
+		c.restoreFootnotes(snap)
+		maxH = math.Min(maxH, limit)
 	}
 	colH := 0.0
 	for _, col := range cols {

@@ -210,6 +210,9 @@ func (r *Resolver) ResolveAll() {
 			if pseudo == "" {
 				continue
 			}
+			if (pseudo == "footnote-call" || pseudo == "footnote-marker") && st.Kw(PFloat) != "footnote" {
+				continue
+			}
 			pc := newCascaded()
 			pc.apply(pe)
 			r.pseudos[pseudoKey{e, pseudo}] = r.compute(pc, st, e, pseudo)
@@ -861,6 +864,18 @@ func (ctx *computeCtx) computeValue(id PropID, v Value, c *cascaded) Value {
 			return ctx.linkValue(string(lv))
 		}
 		return v
+	case PLang:
+		if ci, ok := v.(ContentItem); ok {
+			if ctx.elem == nil {
+				return Keyword("none")
+			}
+			val, ok := ctx.elem.Attr(ci.Name)
+			if !ok || val == "" {
+				return Keyword("none")
+			}
+			return Str(val)
+		}
+		return v
 	case PAnchor:
 		if ci, ok := v.(ContentItem); ok {
 			if ctx.elem == nil {
@@ -1010,9 +1025,6 @@ func (ctx *computeCtx) finish(c *cascaded) {
 	if pos == "absolute" || pos == "fixed" || running {
 		s.vals[PFloat] = Keyword("none")
 	}
-	if s.Kw(PFloat) == "footnote" {
-		s.vals[PFloat] = Keyword("none")
-	}
 	if s.Kw(PFloat) == "inline-start" {
 		s.vals[PFloat] = Keyword("left")
 	} else if s.Kw(PFloat) == "inline-end" {
@@ -1040,6 +1052,14 @@ func (ctx *computeCtx) finish(c *cascaded) {
 			s.vals[PDisplay] = Keyword("grid")
 		case "inline-list-item":
 			s.vals[PDisplay] = Keyword("list-item")
+		}
+	}
+	if s.Kw(PFloat) == "footnote" && display != "none" {
+		// Footnotes are displayed according to footnote-display.
+		if s.Kw(PFootnoteDisplay) == "block" {
+			s.vals[PDisplay] = Keyword("block")
+		} else {
+			s.vals[PDisplay] = Keyword("inline")
 		}
 	}
 	if s.IsRoot && s.Kw(PDisplay) == "contents" {

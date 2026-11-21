@@ -69,6 +69,8 @@ func (c *Context) LayoutDocument(root *Box) []*Page {
 	counters := map[string][]int{}
 	var fixedSources []*Box
 	c.LastStringSets = map[string]string{}
+	c.fn = footnotes{enabled: c.Builder != nil && c.Builder.HasFootnotes, state: map[*Box]fnState{}, claim: map[*Box]int{}}
+	contentDone := false
 	for index := 0; index < 100000; index++ {
 		side := "right"
 		if (index%2 == 1) != rtl {
@@ -84,6 +86,10 @@ func (c *Context) LayoutDocument(root *Box) []*Page {
 		if (nextBreak == "recto" || nextBreak == "verso") && rtl {
 			blank = !blank
 		}
+		if contentDone {
+			// Only reported footnotes are left.
+			blank = true
+		}
 		pt := css.PageType{Name: nextName, Side: side, Blank: blank, First: index == 0, Index: index}
 		style := c.R.PageStyle(pt)
 		page := c.pageGeometry(style)
@@ -96,15 +102,22 @@ func (c *Context) LayoutDocument(root *Box) []*Page {
 		c.excluded = nil
 		c.bfcStack = nil
 		c.pageRunning = map[string][]*Box{}
+		c.PageBottom = page.ContentY() + page.H
+		c.PageTop = page.ContentY()
+		c.startPageFootnotes(pt, style, page)
 		if blank {
+			if area := c.finishPageFootnotes(page); area != nil {
+				page.Children = append(page.Children, area)
+			}
 			pages = append(pages, p)
 			nextBreak = "any"
 			forced = true
+			if contentDone && len(c.fn.reported) == 0 {
+				break
+			}
 			continue
 		}
 		c.forcedBreak = forced && index > 0
-		c.PageBottom = page.ContentY() + page.H
-		c.PageTop = page.ContentY()
 		abs, fixed := &absList{}, &absList{}
 		r := root
 		r.X, r.Y = page.ContentX(), page.ContentY()
@@ -130,11 +143,19 @@ func (c *Context) LayoutDocument(root *Box) []*Page {
 				c.absoluteLayout(f, page, fixed)
 			}
 		}
+		if area := c.finishPageFootnotes(page); area != nil {
+			page.Children = append(page.Children, area)
+		}
 		c.collectStringSets(page, p)
 		p.Running = c.pageRunning
 		pages = append(pages, p)
 		if res.resume == nil {
-			break
+			if len(c.fn.reported) == 0 {
+				break
+			}
+			contentDone = true
+			nextBreak = "any"
+			continue
 		}
 		skip = res.resume
 		nextBreak = res.next.Break
@@ -499,12 +520,12 @@ func (c *Context) makeMarginBoxes(p *Page, ev *marginEval) {
 		mb.W = math.Max(0, r.w-mb.ML-mb.MR-mb.PL-mb.PR-mb.BL-mb.BR)
 		boxH := math.Max(0, r.h-mb.MT-mb.MB-mb.PT-mb.PB-mb.BT-mb.BB)
 		mb.H = math.NaN()
-		saved := c.PageBottom
+		saved := c.saveBottom()
 		c.PageBottom = math.Inf(1)
 		c.createBFC()
 		res := c.blockContainerLayout(mb, math.Inf(-1), nil, true, &absList{}, &absList{}, nil, false, cbInfo{W: r.w, H: r.h, Style: s.style})
 		c.finishBFC(nil)
-		c.PageBottom = saved
+		c.restoreBottom(saved)
 		nb := res.box
 		if nb == nil {
 			continue

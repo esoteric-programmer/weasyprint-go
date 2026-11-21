@@ -26,6 +26,9 @@ type Builder struct {
 	UsesTargets bool
 	AnchorText  map[string]map[string]string
 
+	// HasFootnotes is set when the document has float: footnote elements.
+	HasFootnotes bool
+
 	counters   map[string][]int
 	scopes     []map[string]bool
 	quoteDepth int
@@ -39,8 +42,9 @@ func NewBuilder(r *css.Resolver, imgs *images.Cache, baseURL string) *Builder {
 
 // Build builds the box tree of a document and returns the root box.
 func (b *Builder) Build(doc *html.Node) *Box {
-	b.counters = map[string][]int{}
-	b.scopes = []map[string]bool{{}}
+	b.counters = map[string][]int{"footnote": {0}}
+	b.scopes = []map[string]bool{{"footnote": true}}
+	b.HasFootnotes = false
 	b.quoteDepth = 0
 	root := doc.Root()
 	if root == nil {
@@ -263,7 +267,43 @@ func (b *Builder) element(e *html.Node, parentStyle *css.Style) []*Box {
 	if style.Position() == "running" {
 		box.RunningName = style.RunningName()
 	}
+	if style.Kw(css.PFloat) == "footnote" {
+		return b.footnote(e, style, box)
+	}
 	return []*Box{b.fixup(box)}
+}
+
+// footnote numbers a footnote, gives it its ::footnote-marker and returns
+// the ::footnote-call box that replaces it in the flow.
+func (b *Builder) footnote(e *html.Node, style *css.Style, box *Box) []*Box {
+	b.HasFootnotes = true
+	if vals := b.counters["footnote"]; len(vals) > 0 {
+		vals[len(vals)-1]++
+	} else {
+		b.counters["footnote"] = []int{1}
+		b.scopes[0]["footnote"] = true
+	}
+	if ms := b.R.PseudoStyle(e, "footnote-marker"); ms != nil && ms.Display() != "none" {
+		if items := ms.Content(); items != nil {
+			marker := b.newBox(e, ms, "footnote-marker")
+			b.pushScope()
+			marker.Children = b.contentBoxes(ms, items, e)
+			b.popScope()
+			box.Children = append([]*Box{marker}, box.Children...)
+		}
+	}
+	box = b.fixup(box)
+	cs := b.R.PseudoStyle(e, "footnote-call")
+	if cs == nil {
+		cs = b.R.AnonymousStyle(style)
+	}
+	call := &Box{Kind: KInline, Style: cs, Element: e, Pseudo: "footnote-call", Footnote: box}
+	if items := cs.Content(); items != nil && cs.Display() != "none" {
+		b.pushScope()
+		call.Children = b.contentBoxes(cs, items, e)
+		b.popScope()
+	}
+	return []*Box{call}
 }
 
 func atoiDefault(s string, d int) int {

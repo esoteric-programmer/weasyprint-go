@@ -41,6 +41,8 @@ type Context struct {
 	StringSets     map[string][]string // values set on the current page
 	LastStringSets map[string]string   // last value set before the current page
 
+	fn footnotes
+
 	lineCache  map[*Box]*flatLine
 	strutCache map[*css.Style][2]float64
 	tableCache map[*Box]*tableInfo

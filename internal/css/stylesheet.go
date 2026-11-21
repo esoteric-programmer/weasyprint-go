@@ -314,7 +314,7 @@ var marginBoxNames = map[string]bool{
 	"top-right-corner": true, "bottom-left-corner": true, "bottom-left": true,
 	"bottom-center": true, "bottom-right": true, "bottom-right-corner": true,
 	"left-top": true, "left-middle": true, "left-bottom": true, "right-top": true,
-	"right-middle": true, "right-bottom": true,
+	"right-middle": true, "right-bottom": true, "footnote": true,
 }
 
 // MarginBoxNames lists margin box names in painting order.

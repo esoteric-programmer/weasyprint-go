@@ -52,10 +52,6 @@ func (l *absList) remove(boxes []*Box) {
 	l.boxes = kept
 }
 
-func removePlaceholders(boxes []*Box, abs, fixed *absList) {
-	abs.remove(boxes)
-	fixed.remove(boxes)
-}
 
 // blockLevelLayout lays out a block-level box.
 func (c *Context) blockLevelLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, cbi cbInfo, pageIsEmpty bool,
@@ -345,7 +341,7 @@ func (c *Context) findEarlierPageBreak(children []*Box, abs, fixed *absList) ([]
 			return nil, nil, false
 		}
 		nc := children[:index]
-		removePlaceholders(children[index:], abs, fixed)
+		c.removePlaceholders(children[index:], abs, fixed)
 		return nc, Skip{0: nc[len(nc)-1].lineResume}, true
 	}
 	var prevInFlow *Box
@@ -358,7 +354,7 @@ func (c *Context) findEarlierPageBreak(children []*Box, abs, fixed *absList) ([]
 			if prevInFlow != nil && !avoidPageBreak(blockLevelPageBreak(ch, prevInFlow)) {
 				idx := i + 1
 				nc := children[:idx]
-				removePlaceholders(children[idx:], abs, fixed)
+				c.removePlaceholders(children[idx:], abs, fixed)
 				return nc, Skip{children[idx].index: nil}, true
 			}
 			prevInFlow = ch
@@ -375,7 +371,7 @@ func (c *Context) findEarlierPageBreak(children []*Box, abs, fixed *absList) ([]
 							}
 						}
 					}
-					removePlaceholders(children[i+1:], abs, fixed)
+					c.removePlaceholders(children[i+1:], abs, fixed)
 					return nc, Skip{ch.index: rs}, true
 				}
 			}
@@ -470,7 +466,7 @@ func (c *Context) blockContainerLayout(box *Box, bottomSpace float64, skip Skip,
 		childSkip = nil
 
 		if abort {
-			removePlaceholders(box.Children[startIdx:], abs, fixed)
+			c.removePlaceholders(box.Children[startIdx:], abs, fixed)
 			if box.EstablishesBFC() {
 				c.finishBFC(nil)
 			}
@@ -497,7 +493,7 @@ func (c *Context) blockContainerLayout(box *Box, bottomSpace float64, skip Skip,
 		resume = nil
 	}
 	if fragmented && avoidPageBreak(box.Style.Kw(css.PBreakInside)) && !pageIsEmpty {
-		removePlaceholders(append(append([]*Box{}, newChildren...), box.Children[startIdx:]...), abs, fixed)
+		c.removePlaceholders(append(append([]*Box{}, newChildren...), box.Children[startIdx:]...), abs, fixed)
 		if box.EstablishesBFC() {
 			c.finishBFC(nil)
 		}
@@ -597,7 +593,7 @@ func (c *Context) outOfFlowLayout(box *Box, cbi cbInfo, index int, child *Box, n
 			*newChildren = append(*newChildren, nc)
 			return false, nil, nc
 		}
-		removePlaceholders([]*Box{nc}, abs, fixed)
+		c.removePlaceholders([]*Box{nc}, abs, fixed)
 		// Remove the float from the exclusions.
 		for i, e := range c.excluded {
 			if e == nc {
@@ -632,45 +628,124 @@ func (c *Context) lineboxLayout(box *Box, cbi cbInfo, index int, child *Box, new
 			offsetY = box.BB + box.PB
 		}
 		linesSoFar := len(*newChildren) - lineStart
-		overflow := (linesSoFar > 0 || !pageIsEmpty) && c.overflowsPage(bottomSpace, newY+offsetY)
-		if overflow {
-			needed := widows - 1
+		// breakHere breaks the page before line, keeping widows lines
+		// for the next page (WeasyPrint's _break_line).
+		breakHere := func(needed int) bool {
+			overOrphans := linesSoFar - orphans
+			if overOrphans < 0 && !pageIsEmpty {
+				c.removePlaceholders(line.Children, abs, fixed)
+				return true
+			}
+			if needed > overOrphans && !pageIsEmpty {
+				c.removePlaceholders(line.Children, abs, fixed)
+				return true
+			}
+			if needed > 0 && needed <= overOrphans {
+				drop := (*newChildren)[len(*newChildren)-needed:]
+				for _, d := range drop {
+					c.removePlaceholders(d.Children, abs, fixed)
+				}
+				*newChildren = (*newChildren)[:len(*newChildren)-needed]
+			}
+			c.removePlaceholders(line.Children, abs, fixed)
+			return false
+		}
+		// countNext consumes up to n following lines and returns how many
+		// were missing (negative when enough lines follow).
+		countNext := func(needed int) int {
 			if rs != nil {
 				for needed >= 0 {
 					nl, _, ok := it.next()
 					if !ok {
 						break
 					}
-					removePlaceholders(nl.Children, abs, fixed)
+					c.removePlaceholders(nl.Children, abs, fixed)
 					needed--
 				}
 			}
+			return needed
+		}
+		overflow := (linesSoFar > 0 || !pageIsEmpty) && c.overflowsPage(bottomSpace, newY+offsetY)
+		if overflow {
+			needed := countNext(widows - 1)
+			// If the line could not be broken before but can be now,
+			// first try to report footnotes to the next page.
+			canBreakNow := linesSoFar+1 >= orphans && needed < 0
+			couldBreakBefore := linesSoFar >= orphans && needed <= 0
 			if needed < 0 {
 				needed = 0
 			}
-			overOrphans := linesSoFar - orphans
-			if overOrphans < 0 && !pageIsEmpty {
-				removePlaceholders(line.Children, abs, fixed)
-				return true, false, nil, posY
-			}
-			if needed > overOrphans && !pageIsEmpty {
-				removePlaceholders(line.Children, abs, fixed)
-				return true, false, nil, posY
-			}
-			if needed > 0 && needed <= overOrphans {
-				drop := (*newChildren)[len(*newChildren)-needed:]
-				for _, d := range drop {
-					removePlaceholders(d.Children, abs, fixed)
+			if c.fn.enabled && !c.fn.inArea && canBreakNow && !couldBreakBefore && len(c.fn.current) > 0 {
+				n := 0
+				fits := false
+				for len(c.fn.current) > 0 {
+					c.reportFootnote(c.fn.current[len(c.fn.current)-1])
+					n++
+					if !c.overflowsPage(bottomSpace, newY+offsetY) {
+						fits = true
+						break
+					}
 				}
-				*newChildren = (*newChildren)[:len(*newChildren)-needed]
+				// Keep the reported footnotes in document order.
+				if n >= 2 {
+					r := c.fn.reported[len(c.fn.reported)-n:]
+					for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+						r[i], r[j] = r[j], r[i]
+					}
+				}
+				if fits {
+					*newChildren = append(*newChildren, line)
+					posY = newY
+					stop = true
+					skip = rs
+					break
+				}
 			}
-			removePlaceholders(line.Children, abs, fixed)
+			if breakHere(needed) {
+				return true, false, nil, posY
+			}
 			stop = true
 			break
 		} else if pageIsEmpty && c.overflowsPage(bottomSpace, newY) {
 			newY -= box.MT
 			line.Translate(0, -box.MT)
 			box.MT = 0
+		}
+		if c.fn.enabled && !c.fn.inArea {
+			breakLinebox := false
+			for _, f := range c.footnoteCalls(line) {
+				over := c.layoutFootnote(f)
+				over = over || len(c.fn.reported) > 0 || c.overflowsPage(bottomSpace, newY+offsetY)
+				if !over {
+					continue
+				}
+				c.reportFootnote(f)
+				// With other content on the page, the line or block may
+				// be pushed to the next page.
+				if linesSoFar > 0 || !pageIsEmpty {
+					switch f.Style.Kw(css.PFootnotePolicy) {
+					case "line":
+						needed := countNext(widows - 1)
+						if needed < 0 {
+							needed = 0
+						}
+						if breakHere(needed) {
+							return true, false, nil, posY
+						}
+						stop = true
+						breakLinebox = true
+					case "block":
+						c.removePlaceholders(append(append([]*Box{}, (*newChildren)[lineStart:]...), line), abs, fixed)
+						return true, false, nil, posY
+					}
+				}
+				if breakLinebox {
+					break
+				}
+			}
+			if breakLinebox {
+				break
+			}
 		}
 		*newChildren = append(*newChildren, line)
 		posY = newY
@@ -764,10 +839,10 @@ func (c *Context) inFlowLayout(box *Box, cbi cbInfo, index int, child *Box, newC
 			borderOverflow := c.overflowsPage(bs, newY)
 			canBreak := !emptyNoChildren
 			if canBreak && contentOverflow {
-				removePlaceholders([]*Box{nc}, abs, fixed)
+				c.removePlaceholders([]*Box{nc}, abs, fixed)
 				nc = nil
 			} else if canBreak && borderOverflow {
-				removePlaceholders([]*Box{nc}, abs, fixed)
+				c.removePlaceholders([]*Box{nc}, abs, fixed)
 				child.X, child.Y = cx, cy
 				res = c.blockLevelLayout(child, bs, skip, box, cbi, emptyNoChildren, abs, fixed, adjoining, discard)
 				nc = res.box
@@ -812,7 +887,7 @@ func (c *Context) inFlowLayout(box *Box, cbi cbInfo, index int, child *Box, newC
 			}
 		}
 		if allAbs && len(newChildren) > 0 {
-			removePlaceholders(newChildren, abs, fixed)
+			c.removePlaceholders(newChildren, abs, fixed)
 			newChildren = nil
 			r.children = nil
 		}

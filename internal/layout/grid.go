@@ -440,6 +440,9 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 		for _, it := range items {
 			if itemSkips != nil {
 				if sk, has := itemSkips[index[it]]; has {
+					if it.laid != nil {
+						c.unlayoutFootnotes([]*Box{it.laid})
+					}
 					it.laid, _ = c.layoutFlexItemPaged(it.box, widths[it], itemCB, sk, false, false, y0, 0)
 					it.outerH = it.laid.MarginHeight()
 					end := it.row + it.rowSpan
@@ -494,6 +497,9 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 					sk = itemSkips[index[it]]
 				}
 				var rs Skip
+				if it.laid != nil {
+					c.unlayoutFootnotes([]*Box{it.laid})
+				}
 				it.laid, rs = c.layoutFlexItemPaged(it.box, widths[it], itemCB, sk, false, true, y, bottomSpace+box.PB+box.BB)
 				it.outerH = it.laid.MarginHeight()
 				if rs != nil {

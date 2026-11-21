@@ -117,6 +117,8 @@ type Box struct {
 	Leader string
 	// Footnote and float bookkeeping.
 	IsFloatPlaceholder bool
+	// Footnote called by a ::footnote-call box.
+	Footnote *Box
 	// Original box this one was derived from.
 	Orig *Box
 	// Clearance applied to a block.

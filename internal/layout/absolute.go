@@ -130,12 +130,12 @@ func (c *Context) absoluteLayout(ph *Box, cb *Box, fixed *absList) {
 		res := c.flexLayout(box, math.Inf(-1), nil, cb, cbi, true, &absList{}, fixed)
 		nb = res.box
 	default:
-		saved := c.PageBottom
+		saved := c.saveBottom()
 		c.PageBottom = math.Inf(1)
 		c.createBFC()
 		res := c.blockContainerLayout(box, math.Inf(-1), nil, true, &absList{}, fixed, nil, false, cbi)
 		c.finishBFC(res.box)
-		c.PageBottom = saved
+		c.restoreBottom(saved)
 		nb = res.box
 	}
 	if nb == nil {

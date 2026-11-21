@@ -295,6 +295,9 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 					for _, it := range line {
 						sk, has := itemSkips[index[it]]
 						it.done = !has
+						if it.laid != nil {
+							c.unlayoutFootnotes([]*Box{it.laid})
+						}
 						it.laid, _ = c.layoutFlexItemPaged(it.box, it.target, itemCB, sk, !has, false, y, 0)
 						it.cross = it.laid.MarginHeight()
 						lineCross[li] = math.Max(lineCross[li], it.cross)
@@ -316,6 +319,9 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 							sk, has = itemSkips[index[it]]
 						}
 						var rs Skip
+						if it.laid != nil {
+							c.unlayoutFootnotes([]*Box{it.laid})
+						}
 						it.laid, rs = c.layoutFlexItemPaged(it.box, it.target, itemCB, sk, !has, true, y, bottomSpace+box.PB+box.BB)
 						it.cross = it.laid.MarginHeight()
 						lc = math.Max(lc, it.cross)
@@ -535,7 +541,7 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 	// block flow.
 	if column && !math.IsInf(c.PageBottom, 1) && !box.IsInline && !math.IsInf(bottomSpace, -1) &&
 		c.overflowsPage(bottomSpace, nb.BorderBoxY()+nb.BorderHeight()) {
-		removePlaceholders([]*Box{nb}, abs, fixed)
+		c.removePlaceholders([]*Box{nb}, abs, fixed)
 		return c.flexAsBlock(box, bottomSpace, nil, cbi, pageIsEmpty, abs, fixed)
 	}
 	return blockResult{box: nb, next: np, resume: resume}
@@ -577,7 +583,7 @@ func (c *Context) layoutFlexItemPaged(orig *Box, w float64, cbi cbInfo, skip Ski
 		nb.Translate(0, y-nb.Y)
 		return nb, nil
 	}
-	saved := c.PageBottom
+	saved := c.saveBottom()
 	bs := math.Inf(-1)
 	if constrained {
 		bs = bottomSpace
@@ -587,7 +593,7 @@ func (c *Context) layoutFlexItemPaged(orig *Box, w float64, cbi cbInfo, skip Ski
 	c.createBFC()
 	res := c.blockContainerLayout(b, bs, skip, true, &absList{}, &absList{}, nil, false, cbi)
 	c.finishBFC(res.box)
-	c.PageBottom = saved
+	c.restoreBottom(saved)
 	if res.box == nil {
 		b.Children = nil
 		b.H = 0
@@ -690,9 +696,9 @@ func (c *Context) layoutFlexItem(orig *Box, w, h float64, cbi cbInfo) *Box {
 	} else {
 		b.H = specifiedHeight(b, cbi)
 	}
-	saved := c.PageBottom
+	saved := c.saveBottom()
 	c.PageBottom = math.Inf(1)
-	defer func() { c.PageBottom = saved }()
+	defer func() { c.restoreBottom(saved) }()
 	switch b.Kind {
 	case KReplaced:
 		if math.IsNaN(b.H) {

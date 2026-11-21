@@ -181,6 +181,12 @@ func Breaks(runes []rune, opt BreakOptions) []Break {
 			b = BreakNone
 		case after == clPO && before == clNU:
 			b = BreakNone
+		case before == clIS && after == clOP:
+			b = BreakAllowed
+		case before == clIS && after == clNU && !(i >= 2 && cls[i-2] == clNU):
+			b = BreakAllowed
+		case before == clCL && runes[i-1] == '}' && (after == clAL || after == clNU):
+			b = BreakAllowed
 		case before == clID || after == clID:
 			b = BreakAllowed
 		case opt.BreakAll && (before == clAL || before == clNU) && (after == clAL || after == clNU):

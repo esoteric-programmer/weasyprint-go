@@ -587,7 +587,7 @@ func (c *Context) tableLayout(table *Box, bottomSpace float64, skip Skip, wrappe
 		footerBox = fb
 		footerH = h
 		if fb != nil {
-			removePlaceholders([]*Box{fb}, abs, fixed)
+			c.removePlaceholders([]*Box{fb}, abs, fixed)
 		}
 	}
 	bottomPad := table.PB + table.BB + ti.spacingV
@@ -615,7 +615,7 @@ func (c *Context) tableLayout(table *Box, bottomSpace float64, skip Skip, wrappe
 		if rs != nil || ng == nil {
 			if ng == nil && rowsOnPage == 0 && !pageIsEmpty {
 				// Nothing fits: move the whole table.
-				removePlaceholders(newChildren, abs, fixed)
+				c.removePlaceholders(newChildren, abs, fixed)
 				return blockResult{next: nextPage{Break: "any"}}
 			}
 			if rs != nil {
@@ -659,10 +659,10 @@ func isPercentStyle(s *css.Style, id css.PropID) bool {
 
 // layoutRowGroup lays out a whole row group without page breaks.
 func (c *Context) layoutRowGroup(g, table *Box, ti *tableInfo, y float64, skip Skip, bottomSpace float64, empty bool, abs, fixed *absList) (*Box, float64) {
-	saved := c.PageBottom
+	saved := c.saveBottom()
 	c.PageBottom = math.Inf(1)
 	ng, h, _, _ := c.layoutRowGroupPaged(g, table, ti, y, skip, math.Inf(-1), true, abs, fixed)
-	c.PageBottom = saved
+	c.restoreBottom(saved)
 	return ng, h
 }
 
@@ -754,7 +754,7 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 			fitsFreshPage := rowH <= c.PageBottom-c.PageTop-bottomSpace
 			avoid := row.Style.Kw(css.PBreakInside) != "auto"
 			if canMove && (avoid || (fitsFreshPage && !continuing)) {
-				removePlaceholders(cells, abs, fixed)
+				c.removePlaceholders(cells, abs, fixed)
 				if len(out) == 0 {
 					return nil, 0, nil, 0
 				}
@@ -768,6 +768,7 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 			if !math.IsInf(c.PageBottom, 1) {
 				// Split the row: fragment each cell at the page bottom.
 				cellSkips := Skip{}
+				c.unlayoutFootnotes(cells)
 				cells = cells[:0]
 				for ci, cell := range row.Children {
 					var cs Skip
@@ -891,7 +892,7 @@ func (c *Context) layoutCellPaged(cell, table *Box, ti *tableInfo, y float64, sk
 		nc.CellEmpty = true
 		return nc, nil
 	}
-	saved := c.PageBottom
+	saved := c.saveBottom()
 	bs := math.Inf(-1)
 	if constrained {
 		bs = bottomSpace + nc.PB + nc.BB
@@ -901,7 +902,7 @@ func (c *Context) layoutCellPaged(cell, table *Box, ti *tableInfo, y float64, sk
 	c.createBFC()
 	res := c.blockContainerLayout(nc, bs, skip, true, &absList{}, &absList{}, nil, false, cbInfo{W: table.W, HAuto: true, Style: table.Style})
 	c.finishBFC(res.box)
-	c.PageBottom = saved
+	c.restoreBottom(saved)
 	out := res.box
 	resume := res.resume
 	if out == nil {
