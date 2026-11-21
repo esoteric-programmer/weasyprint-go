@@ -890,22 +890,11 @@ func (sr *svgRenderer) image(n *html.Node, st svgStyle) {
 }
 
 func (sr *svgRenderer) text(n *html.Node, st svgStyle) {
-	x := sr.attrLen(n, st, "x", sr.vw)
-	y := sr.attrLen(n, st, "y", sr.vh)
-	if dx := images.Attr(n, "dx"); dx != "" {
-		x += sr.length(st, dx, sr.vw)
-	}
-	if dy := images.Attr(n, "dy"); dy != "" {
-		y += sr.length(st, dy, sr.vh)
-	}
-	type run struct {
-		text string
-		st   svgStyle
-		x, y *float64
-	}
+	x, y := 0.0, 0.0
 	var runs []run
 	var collect func(m *html.Node, ms svgStyle)
 	collect = func(m *html.Node, ms svgStyle) {
+		start := len(runs)
 		for c := m.FirstChild; c != nil; c = c.NextSibling {
 			switch c.Type {
 			case html.TextNode:
@@ -925,32 +914,16 @@ func (sr *svgRenderer) text(n *html.Node, st svgStyle) {
 					if cs["display"] == "none" {
 						continue
 					}
-					start := len(runs)
 					collect(c, cs)
-					if start < len(runs) {
-						if v := images.Attr(c, "x"); v != "" {
-							xv := sr.length(cs, v, sr.vw)
-							runs[start].x = &xv
-						}
-						if v := images.Attr(c, "y"); v != "" {
-							yv := sr.length(cs, v, sr.vh)
-							runs[start].y = &yv
-						}
-						if v := images.Attr(c, "dy"); v != "" && runs[start].y == nil {
-							yv := math.NaN()
-							runs[start].y = &yv
-							_ = v
-						}
-					}
 				}
 			}
 		}
+		runs = sr.positionRuns(m, ms, runs, start)
 	}
 	collect(n, st)
 	if len(runs) == 0 || st["visibility"] == "hidden" {
 		return
 	}
-	// Shape everything to compute the total width for text-anchor.
 	type shapedRun struct {
 		sh  *text.Shaped
 		col css.Color
@@ -958,7 +931,6 @@ func (sr *svgRenderer) text(n *html.Node, st svgStyle) {
 		r   run
 	}
 	var shaped []shapedRun
-	total := 0.0
 	for _, r := range runs {
 		spec := text.Spec{Families: splitFamilies(r.st["font-family"]), Weight: 400, Size: sr.fontSize(r.st), Stretch: 5}
 		if fw := r.st["font-weight"]; fw == "bold" || fw == "bolder" {
@@ -973,25 +945,60 @@ func (sr *svgRenderer) text(n *html.Node, st svgStyle) {
 		col, ok := sr.color(r.st, r.st["fill"])
 		col.A *= r.st.num("fill-opacity", 1)
 		shaped = append(shaped, shapedRun{sh, col, ok, r})
-		total += sh.Pos[len(sh.Runes)]
 	}
-	switch st["text-anchor"] {
-	case "middle":
-		x -= total / 2
-	case "end":
-		x -= total
-	}
-	for _, s := range shaped {
+	// Place the runs, then shift the text chunks (started by elements
+	// with x or y) for text-anchor like WeasyPrint: the first chunk by
+	// the width of the whole text, the others by their own width.
+	type placed struct{ x, y, w float64 }
+	pos := make([]placed, len(shaped))
+	for i, s := range shaped {
 		if s.r.x != nil {
 			x = *s.r.x
 		}
-		if s.r.y != nil && !math.IsNaN(*s.r.y) {
+		if s.r.y != nil {
 			y = *s.r.y
 		}
-		if s.ok {
-			sr.cv.drawGlyphs(s.sh.Runes, s.sh.Glyphs, nil, x, y, s.col)
+		x += s.r.dx
+		y += s.r.dy
+		w := s.sh.Pos[len(s.sh.Runes)]
+		pos[i] = placed{x, y, w}
+		x += w
+	}
+	extent := func(from, to int) float64 {
+		lo, hi := math.Inf(1), math.Inf(-1)
+		for _, p := range pos[from:to] {
+			lo, hi = math.Min(lo, p.x), math.Max(hi, p.x+p.w)
 		}
-		x += s.sh.Pos[len(s.sh.Runes)]
+		if lo > hi {
+			return 0
+		}
+		return hi - lo
+	}
+	if anchor := st["text-anchor"]; anchor == "middle" || anchor == "end" {
+		for i := 0; i < len(shaped); {
+			j := i + 1
+			for j < len(shaped) && !shaped[j].r.chunk {
+				j++
+			}
+			w := extent(i, j)
+			if i == 0 && !shaped[0].r.chunk {
+				// Text of the <text> element itself.
+				w = extent(0, len(shaped))
+			}
+			shift := w
+			if anchor == "middle" {
+				shift = w / 2
+			}
+			for k := i; k < j; k++ {
+				pos[k].x -= shift
+			}
+			i = j
+		}
+	}
+	for i, s := range shaped {
+		if s.ok {
+			sr.cv.drawGlyphs(s.sh.Runes, s.sh.Glyphs, nil, pos[i].x, pos[i].y, s.col)
+		}
 	}
 }
 
@@ -1007,4 +1014,96 @@ func splitFamilies(s string) []string {
 		out = []string{"sans-serif"}
 	}
 	return out
+}
+
+// run is a piece of SVG text with the same style. x and y are absolute
+// positions, dx and dy shifts applied before it.
+type run struct {
+	text   string
+	st     svgStyle
+	x, y   *float64
+	dx, dy float64
+	// dxSet and dySet are set when a descendant gave the shifts, which
+	// then win over the ancestors' ones.
+	dxSet, dySet bool
+	// chunk is set on the first run of a tspan with x or y.
+	chunk bool
+}
+
+// positionRuns applies the x, y, dx and dy attributes of m to the
+// characters of runs[start:], one value per character, splitting runs
+// when lists give several values.
+func (sr *svgRenderer) positionRuns(m *html.Node, ms svgStyle, runs []run, start int) []run {
+	list := func(name string, ref float64) []float64 {
+		v := images.Attr(m, name)
+		if v == "" {
+			return nil
+		}
+		var out []float64
+		for _, f := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+			out = append(out, sr.length(ms, f, ref))
+		}
+		return out
+	}
+	xs, ys := list("x", sr.vw), list("y", sr.vh)
+	dxs, dys := list("dx", sr.vw), list("dy", sr.vh)
+	nChars := max(len(xs), len(ys), len(dxs), len(dys))
+	if nChars == 0 || start >= len(runs) {
+		return runs
+	}
+	if (len(xs) > 0 || len(ys) > 0) && strings.EqualFold(m.Tag, "tspan") {
+		runs[start].chunk = true
+	}
+	// Split the first nChars characters into runs of their own when
+	// several values are given.
+	var out []run
+	out = append(out, runs[:start]...)
+	k := 0
+	for _, r := range runs[start:] {
+		if k >= nChars || nChars == 1 {
+			if k == 0 {
+				r = setPos(r, 0, xs, ys, dxs, dys)
+			}
+			k += len([]rune(r.text))
+			out = append(out, r)
+			continue
+		}
+		rs := []rune(r.text)
+		for i := 0; i < len(rs); i++ {
+			if k >= nChars {
+				rest := r
+				rest.text = string(rs[i:])
+				rest.x, rest.y, rest.dx, rest.dy, rest.dxSet, rest.dySet, rest.chunk = nil, nil, 0, 0, false, false, false
+				out = append(out, rest)
+				k += len(rs) - i
+				break
+			}
+			one := r
+			one.text = string(rs[i])
+			if i > 0 {
+				one.x, one.y, one.dx, one.dy, one.dxSet, one.dySet, one.chunk = nil, nil, 0, 0, false, false, false
+			}
+			out = append(out, setPos(one, k, xs, ys, dxs, dys))
+			k++
+		}
+	}
+	return out
+}
+
+func setPos(r run, k int, xs, ys, dxs, dys []float64) run {
+	if k < len(xs) && r.x == nil {
+		v := xs[k]
+		r.x = &v
+	}
+	if k < len(ys) && r.y == nil {
+		v := ys[k]
+		r.y = &v
+	}
+	if k < len(dxs) && !r.dxSet {
+		r.dx, r.dxSet = dxs[k], true
+	}
+	if k < len(dys) && !r.dySet {
+		r.dy, r.dySet = dys[k], true
+	}
+	return r
 }

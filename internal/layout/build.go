@@ -809,6 +809,9 @@ func (b *Builder) inlineSVG(e *html.Node) *images.Image {
 		b.warn("Failed to render inline SVG: " + err.Error())
 		return nil
 	}
+	if b.Images != nil {
+		im.SVG.SetFetcher(b.Images.Get)
+	}
 	return im
 }
 
