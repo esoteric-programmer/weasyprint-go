@@ -52,7 +52,6 @@ func (l *absList) remove(boxes []*Box) {
 	l.boxes = kept
 }
 
-
 // blockLevelLayout lays out a block-level box.
 func (c *Context) blockLevelLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, cbi cbInfo, pageIsEmpty bool,
 	abs, fixed *absList, adjoining []float64, discard bool) blockResult {
