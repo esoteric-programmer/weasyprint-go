@@ -57,7 +57,14 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 	if !math.IsInf(c.PageBottom, 1) {
 		maxH = c.PageBottom - bottomSpace - box.PB - box.BB - top
 	}
+	// A height constraint smaller than the page makes the content overflow
+	// in additional columns in the inline direction instead of continuing
+	// on the next page.
+	inlineOverflow := false
 	if specH := specifiedHeight(box, cbi); !math.IsNaN(specH) {
+		if specH <= maxH {
+			inlineOverflow = true
+		}
 		maxH = math.Min(maxH, specH)
 	}
 
@@ -96,7 +103,7 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 		var cols []*Box
 		rs := skip
 		used := 0.0
-		for i := 0; i < n; i++ {
+		for i := 0; i < n || (commit && inlineOverflow && i < 1000); i++ {
 			x := box.ContentX() + float64(i)*(colW+gap)
 			if s.Kw(css.PDirection) == "rtl" {
 				x = box.ContentX() + avail - float64(i+1)*colW - float64(i)*gap
@@ -110,9 +117,18 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 			res := c.blockContainerLayout(col, 0, rs, pageIsEmpty || i > 0, a, f, nil, false, cbInfo{W: colW, HAuto: true, Style: box.Style})
 			c.finishBFC(nil)
 			if res.box == nil {
+				// Nothing fits in this column: the content is not done.
+				if rs == nil {
+					rs = Skip{}
+				}
 				break
 			}
 			res.box.NoStartDecor, res.box.NoEndDecor = false, false
+			if res.resume == nil {
+				// Columns are formatting contexts: the bottom margin of
+				// their last child is inside them.
+				res.box.H += math.Max(0, collapseMargins(res.adjoining))
+			}
 			cols = append(cols, res.box)
 			used = math.Max(used, res.box.H)
 			rs = res.resume

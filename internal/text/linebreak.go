@@ -37,6 +37,7 @@ const (
 	clPR                // prefix numeric
 	clPO                // postfix numeric
 	clWJ                // word joiner
+	clCB                // contingent break (object replacement: atomic inlines)
 )
 
 func classify(r rune) lbClass {
@@ -60,6 +61,8 @@ func classify(r rune) lbClass {
 		return clGL
 	case 0x2060, 0xfeff:
 		return clWJ
+	case 0xfffc:
+		return clCB
 	case ')', ']', '}', 0x3001, 0x3002, 0xff0c, 0xff0e, 0x300d, 0x300f, 0x3011, 0x3015, 0x3017, 0x3019, 0x301b, 0xff09, 0xff3d, 0xff5d, 0x3009, 0x300b, 0xfe50, 0xfe52:
 		return clCL
 	case '(', '[', '{', 0x300c, 0x300e, 0x3010, 0x3014, 0x3016, 0x3018, 0x301a, 0xff08, 0xff3b, 0xff5b, 0x3008, 0x300a, 0x00a1, 0x00bf:
@@ -157,6 +160,8 @@ func Breaks(runes []rune, opt BreakOptions) []Break {
 			b = BreakNone
 		case before == clQU || after == clQU:
 			b = BreakNone
+		case before == clCB || after == clCB:
+			b = BreakAllowed
 		case after == clNS:
 			b = BreakNone
 		case before == clSH:

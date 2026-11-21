@@ -173,7 +173,8 @@ func blockLevelWidth(box *Box, cbWidth float64, withMinMax bool) {
 }
 
 func relativePositioning(box *Box, cbW, cbH float64) {
-	if box.Style != nil && box.Kind != KText && box.Style.Kw(css.PPosition) == "relative" {
+	// Line boxes share the style of their block but are not positioned.
+	if box.Style != nil && box.Kind != KText && box.Kind != KLine && box.Style.Kw(css.PPosition) == "relative" {
 		var dx, dy float64
 		left, lok := lengthOrAuto(box.Style, css.PLeft, cbW)
 		right, rok := lengthOrAuto(box.Style, css.PRight, cbW)

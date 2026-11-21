@@ -547,7 +547,9 @@ func (c *Context) tableLayout(table *Box, bottomSpace float64, skip Skip, wrappe
 		table.BT, table.PT = 0, 0
 	}
 	posY := table.ContentY()
-	if ti.spacingV > 0 && (isStart || true) {
+	// The spacing before the first row is not repeated on continuation
+	// fragments (WeasyPrint slices it with the top border).
+	if ti.spacingV > 0 && isStart {
 		posY += ti.spacingV
 	}
 	startGroup, groupSkip := 0, Skip(nil)
@@ -590,7 +592,6 @@ func (c *Context) tableLayout(table *Box, bottomSpace float64, skip Skip, wrappe
 			c.removePlaceholders([]*Box{fb}, abs, fixed)
 		}
 	}
-	bottomPad := table.PB + table.BB + ti.spacingV
 	var resume Skip
 	rowsOnPage := 0
 	for gi := startGroup; gi < len(table.Children); gi++ {
@@ -602,7 +603,10 @@ func (c *Context) tableLayout(table *Box, bottomSpace float64, skip Skip, wrappe
 		if gi == startGroup {
 			gs = groupSkip
 		}
-		bs := bottomSpace + bottomPad
+		// The bottom border-spacing, padding and border of the table are
+		// not reserved: they are sliced off when the table breaks, as in
+		// WeasyPrint (rows check their own spacing below).
+		bs := bottomSpace
 		if g != footer && footerH > 0 {
 			bs += footerH
 		}
@@ -749,7 +753,7 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 		}
 		rowH = heights[ri]
 		// Page break check.
-		if c.overflowsPage(bottomSpace, posY+rowH) {
+		if c.overflowsPage(bottomSpace, posY+rowH+ti.spacingV) {
 			canMove := len(out) > 0 || !pageIsEmpty
 			fitsFreshPage := rowH <= c.PageBottom-c.PageTop-bottomSpace
 			avoid := row.Style.Kw(css.PBreakInside) != "auto"
@@ -780,6 +784,9 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 					cells = append(cells, nc)
 					if rs != nil {
 						cellSkips[ci] = rs
+						// A broken cell fills the page: no vertical
+						// alignment.
+						nc.CellBroken = true
 					}
 				}
 				if len(cellSkips) > 0 {
@@ -788,7 +795,8 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 					nr.H = rowH
 					nr.NoEndDecor = true
 					out = append(out, laid{nr, cells})
-					posY += rowH + ti.spacingV
+					// No spacing after a broken row.
+					posY += rowH
 					resume = Skip{ri: cellSkips}
 					break
 				}
@@ -895,7 +903,8 @@ func (c *Context) layoutCellPaged(cell, table *Box, ti *tableInfo, y float64, sk
 	saved := c.saveBottom()
 	bs := math.Inf(-1)
 	if constrained {
-		bs = bottomSpace + nc.PB + nc.BB
+		// The bottom decoration of a cell is sliced off at a break.
+		bs = bottomSpace
 	} else {
 		c.PageBottom = math.Inf(1)
 	}
@@ -963,7 +972,7 @@ func (c *Context) finishCell(cell *Box, rowsHeight float64, siblings []*Box) {
 	newH := rowsHeight - cell.PT - cell.PB - cell.BT - cell.BB
 	extra := newH - contentH
 	cell.H = math.Max(newH, cell.H)
-	if extra <= 0 {
+	if extra <= 0 || cell.CellBroken {
 		return
 	}
 	var dy float64

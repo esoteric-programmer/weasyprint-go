@@ -76,6 +76,8 @@ type Box struct {
 	Shaped         *text.Shaped
 	Start, End     int
 	Hyphen         string // text appended when broken at a soft hyphen
+	HyphenW        float64
+	TabOrigin      float64 // origin of tab stops (start of the line)
 	JustifySpacing float64
 	Spec           text.Spec
 	Metrics        text.Metrics
@@ -100,6 +102,7 @@ type Box struct {
 	Collapse         *collapsedBorders
 	RowHeights       []float64
 	CellEmpty        bool
+	CellBroken       bool // cell fragmented at a page break
 
 	// Navigation.
 	Link          *css.LinkValue
@@ -115,6 +118,9 @@ type Box struct {
 	Deferred []css.ContentItem
 	// Leader string, for leader boxes.
 	Leader string
+	// LeaderAnchor is the distance from the end of a leader box to the
+	// point its pattern is aligned on.
+	LeaderAnchor float64
 	// Footnote and float bookkeeping.
 	IsFloatPlaceholder bool
 	// Footnote called by a ::footnote-call box.

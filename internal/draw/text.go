@@ -105,17 +105,17 @@ func (cv *canvas) drawText(b *layout.Box, decos []decoration) {
 		}
 		total += advances[i]
 	}
-	hyphenW := 0.0
 	var hsh *text.Shaped
 	if b.Hyphen != "" {
 		hsh = cv.r.shaper.Shape(b.Hyphen, b.Spec)
-		hyphenW = hsh.Pos[len(hsh.Runes)]
 	}
 	if tabs > 0 {
-		extra := (b.W - hyphenW - total) / float64(tabs)
+		tw := layout.TabWidths(b)
+		k := 0
 		for i, g := range glyphs {
-			if sh.Runes[g.Start] == '\t' {
-				advances[i] += extra
+			if sh.Runes[g.Start] == '\t' && k < len(tw) {
+				advances[i] = tw[k]
+				k++
 			}
 		}
 	}
@@ -231,8 +231,10 @@ func (cv *canvas) drawLeader(b *layout.Box) {
 	if w <= 0 {
 		return
 	}
-	// Align leader glyphs on a global grid so that leaders line up.
-	start := math.Ceil(b.X/w) * w
+	// Leader patterns are aligned on the end of the line, and only whole
+	// patterns are drawn.
+	anchor := b.X + b.W + b.LeaderAnchor
+	start := anchor - math.Floor((anchor-b.X)/w+1e-9)*w
 	color := b.Style.Color(css.PColor)
 	m := cv.r.shaper.PrimaryMetrics(spec)
 	lh := b.Style.LineHeight(m.Ascent + m.Descent)

@@ -59,8 +59,14 @@ type Library struct {
 	loaded   map[*FaceInfo]*Font
 	fallback map[rune]*FaceInfo
 	allCmaps bool
+	byNorm   map[string][]*FaceInfo // families without blanks
+	fcOnce   sync.Once
+	fc       *FontConfig
 	// Dirs are the directories scanned for system fonts.
 	Dirs []string
+	// CustomDirs disables the font directories of the fontconfig
+	// configuration.
+	CustomDirs bool
 	// Warn receives warnings.
 	Warn func(string)
 }
@@ -126,7 +132,13 @@ func (l *Library) scan() {
 	}
 	l.scanned = true
 	seen := map[string]bool{}
-	for _, dir := range l.Dirs {
+	dirs := l.Dirs
+	if !l.CustomDirs {
+		if fc := l.fontConfig(); fc != nil {
+			dirs = append(append([]string{}, dirs...), fc.Dirs...)
+		}
+	}
+	for _, dir := range dirs {
 		filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return nil
@@ -147,9 +159,12 @@ func (l *Library) scan() {
 			return nil
 		})
 	}
+	l.byNorm = map[string][]*FaceInfo{}
 	for _, fi := range l.faces {
 		for _, fam := range fi.Families {
 			l.byFamily[fam] = append(l.byFamily[fam], fi)
+			k := normFamily(fam)
+			l.byNorm[k] = append(l.byNorm[k], fi)
 		}
 	}
 }
@@ -441,6 +456,62 @@ var familyAliases = map[string][]string{
 	"verdana":         {"DejaVu Sans"},
 }
 
+// fontConfig returns the system fontconfig rules, or nil.
+func (l *Library) fontConfig() *FontConfig {
+	l.fcOnce.Do(func() {
+		if os.Getenv("WEASYPRINT_GO_FONTCONFIG") != "0" {
+			l.fc = LoadFontConfig()
+		}
+	})
+	return l.fc
+}
+
+// OrderedFamilies expands a CSS family list with the system's fontconfig
+// substitution rules (aliases, generic families, metric-compatible
+// substitutes) and returns the families in matching order: strongly bound
+// families first, then weakly bound ones. ok is false when there is no
+// fontconfig configuration.
+func (l *Library) OrderedFamilies(families []string) (out []string, ok bool) {
+	fc := l.fontConfig()
+	if fc == nil {
+		return nil, false
+	}
+	expanded := fc.Expand(families)
+	seen := map[string]bool{}
+	for _, strong := range []bool{true, false} {
+		for _, f := range expanded {
+			if f.Strong != strong {
+				continue
+			}
+			if k := normFamily(f.Name); !seen[k] {
+				seen[k] = true
+				out = append(out, f.Name)
+			}
+		}
+	}
+	return out, true
+}
+
+// ResolveExact returns the selected face of an installed or user-defined
+// family, without generic family or alias substitution.
+func (l *Library) ResolveExact(family string, req Request) *Face {
+	l.mu.Lock()
+	name := strings.ToLower(family)
+	faces, ok := l.user[name]
+	if !ok {
+		l.scan()
+		faces = l.byFamily[name]
+		if len(faces) == 0 {
+			faces = l.byNorm[normFamily(family)]
+		}
+	}
+	l.mu.Unlock()
+	if len(faces) == 0 {
+		return nil
+	}
+	return l.resolveFaces(faces, req)
+}
+
 // IsGeneric reports whether a family name is a generic family.
 func IsGeneric(name string) bool {
 	_, ok := genericFamilies[strings.ToLower(name)]
@@ -601,6 +672,10 @@ func (l *Library) Resolve(family string, req Request) *Face {
 	if len(faces) == 0 {
 		return nil
 	}
+	return l.resolveFaces(faces, req)
+}
+
+func (l *Library) resolveFaces(faces []*FaceInfo, req Request) *Face {
 	fi := Select(faces, req)
 	l.mu.Lock()
 	f := l.Load(fi)

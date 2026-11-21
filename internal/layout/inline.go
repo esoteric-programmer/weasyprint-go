@@ -2,7 +2,6 @@ package layout
 
 import (
 	"math"
-	"strings"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/hyphen"
@@ -739,6 +738,13 @@ func (it *lineIterator) buildLine(start, end linePos, x0, textIndent, avail, y f
 	// Leaders fill the remaining space.
 	expandLeaders(line, avail-textIndent-width)
 	width = positionInline(line, x0+textIndent)
+	// Leader patterns are aligned on the end of the line (WeasyPrint's
+	// handle_leader).
+	line.Descendants(func(d *Box) {
+		if d.Kind == KLeader {
+			d.LeaderAnchor = x0 + avail - (d.X + d.W)
+		}
+	})
 	// Vertical alignment.
 	c.lineVerticality(line)
 	if !forced && isPhantomLine(line) {
@@ -895,21 +901,12 @@ func (it *lineIterator) sizeInlines(b *Box) {
 		switch ch.Kind {
 		case KText:
 			ch.W = ch.Shaped.Width(ch.Start, ch.End)
-			// Tabs.
-			if strings.ContainsRune(string(ch.Shaped.Runes[ch.Start:ch.End]), '\t') && ch.Style.WhiteSpace() != "normal" {
-				ch.W = 0
-				item := &flatItem{box: ch, shaped: ch.Shaped, ws: ch.Style.WhiteSpace()}
-				for i := ch.Start; i < ch.End; i++ {
-					if ch.Shaped.Runes[i] == '\t' {
-						ch.W += tabWidth(item, ch.X+ch.W, 0)
-					} else {
-						ch.W += ch.Shaped.Pos[i+1] - ch.Shaped.Pos[i]
-					}
-				}
-			}
+			// Tabs are sized once the position in the line is known.
+			ch.HyphenW = 0
 			if ch.Hyphen != "" {
 				hs := it.c.Shaper.Shape(ch.Hyphen, ch.Spec)
-				ch.W += hs.Pos[len(hs.Runes)]
+				ch.HyphenW = hs.Pos[len(hs.Runes)]
+				ch.W += ch.HyphenW
 			}
 			ch.ML, ch.MR, ch.PL, ch.PR, ch.BL, ch.BR = 0, 0, 0, 0, 0, 0
 		case KInline:
@@ -925,6 +922,38 @@ func (it *lineIterator) sizeInlines(b *Box) {
 // positionInline lays children out horizontally from x and returns the
 // total margin width.
 func positionInline(b *Box, x float64) float64 {
+	return positionInlineFrom(b, x, x)
+}
+
+// hasTabs reports whether a text box contains preserved tabs.
+func hasTabs(ch *Box) bool {
+	if ch.Style.WhiteSpace() == "normal" || ch.Style.WhiteSpace() == "nowrap" {
+		return false
+	}
+	for _, r := range ch.Shaped.Runes[ch.Start:ch.End] {
+		if r == '\t' {
+			return true
+		}
+	}
+	return false
+}
+
+// textWidthAt returns the width of a text box with tabs starting at x,
+// tab stops being relative to origin (the start of the line).
+func textWidthAt(ch *Box, x, origin float64, hyphenW float64) float64 {
+	item := &flatItem{box: ch, shaped: ch.Shaped, ws: ch.Style.WhiteSpace()}
+	w := 0.0
+	for i := ch.Start; i < ch.End; i++ {
+		if ch.Shaped.Runes[i] == '\t' {
+			w += tabWidth(item, x+w, origin)
+		} else {
+			w += ch.Shaped.Pos[i+1] - ch.Shaped.Pos[i]
+		}
+	}
+	return w + hyphenW
+}
+
+func positionInlineFrom(b *Box, x, origin float64) float64 {
 	start := x
 	for _, ch := range b.Children {
 		if ch.IsFloated() {
@@ -938,11 +967,15 @@ func positionInline(b *Box, x float64) float64 {
 		switch ch.Kind {
 		case KInline:
 			ch.X = x
-			inner := positionInline(ch, x+ch.ML+ch.BL+ch.PL)
+			inner := positionInlineFrom(ch, x+ch.ML+ch.BL+ch.PL, origin)
 			ch.W = inner
 			x += ch.MarginWidth()
 		case KText, KLeader:
 			ch.X = x
+			if ch.Kind == KText && ch.Shaped != nil && hasTabs(ch) {
+				ch.TabOrigin = origin
+				ch.W = textWidthAt(ch, x, origin, ch.HyphenW)
+			}
 			x += ch.W
 		default:
 			ch.Translate(x-ch.X, 0)
@@ -1325,4 +1358,25 @@ func isPhantomLine(b *Box) bool {
 		}
 	}
 	return true
+}
+
+// TabWidths returns the widths of the preserved tabs of a laid-out text
+// box, in order.
+func TabWidths(b *Box) []float64 {
+	if b.Shaped == nil || !hasTabs(b) {
+		return nil
+	}
+	item := &flatItem{box: b, shaped: b.Shaped, ws: b.Style.WhiteSpace()}
+	var out []float64
+	x := b.X
+	for i := b.Start; i < b.End; i++ {
+		if b.Shaped.Runes[i] == '\t' {
+			w := tabWidth(item, x, b.TabOrigin)
+			out = append(out, w)
+			x += w
+		} else {
+			x += b.Shaped.Pos[i+1] - b.Shaped.Pos[i]
+		}
+	}
+	return out
 }

@@ -336,6 +336,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	lib.Warn = warn
 	if opts.FontDirs != nil {
 		lib.Dirs = opts.FontDirs
+		lib.CustomDirs = true
 	}
 	resolver := css.NewResolver(h.root, sheets, h.BaseURL)
 	if opts.PresentationalHints {

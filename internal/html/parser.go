@@ -82,6 +82,70 @@ type parser struct {
 	inBody     bool
 	foreign    int // depth of svg/math
 	pendingRaw *rawPending
+	doctype    *string // DOCTYPE token data, if any
+}
+
+// quirksPublicPrefixes are DOCTYPE public identifiers that trigger quirks
+// mode (from the HTML standard).
+var quirksPublicPrefixes = []string{
+	"+//silmaril//dtd html pro v0r11 19970101//", "-//as//dtd html 3.0 aswedit + extensions//",
+	"-//advasoft ltd//dtd html 3.0 aswedit + extensions//", "-//ietf//dtd html 2.0",
+	"-//ietf//dtd html 3", "-//ietf//dtd html level", "-//ietf//dtd html strict",
+	"-//ietf//dtd html//", "-//metrius//dtd metrius presentational//",
+	"-//microsoft//dtd internet explorer", "-//netscape comm. corp.//dtd",
+	"-//o'reilly and associates//dtd html", "-//softquad", "-//spyglass//dtd html 2.0",
+	"-//sq//dtd html 2.0", "-//sun microsystems corp.//dtd hotjava",
+	"-//w3c//dtd html 3", "-//w3c//dtd html 4.0 frameset//", "-//w3c//dtd html 4.0 transitional//",
+	"-//w3c//dtd html experimental", "-//w3c//dtd w3 html//", "-//w3o//dtd w3 html",
+	"-//webtechs//dtd mozilla html", "-/w3c/dtd html 4.0 transitional/en", "html",
+}
+
+// quirks reports whether the document is in quirks mode (no DOCTYPE, or a
+// legacy one).
+func (p *parser) quirks() bool {
+	if p.doctype == nil {
+		return true
+	}
+	d := strings.ToLower(strings.TrimSpace(*p.doctype))
+	fields := strings.Fields(d)
+	if len(fields) == 0 || fields[0] != "html" {
+		return true
+	}
+	rest := strings.TrimSpace(d[len(fields[0]):])
+	if !strings.HasPrefix(rest, "public") {
+		return false
+	}
+	ids := quotedStrings(rest)
+	if len(ids) == 0 {
+		return false
+	}
+	pub := ids[0]
+	for _, q := range quirksPublicPrefixes {
+		if pub == q || (q != "html" && strings.HasPrefix(pub, q)) {
+			return true
+		}
+	}
+	if len(ids) < 2 && (strings.HasPrefix(pub, "-//w3c//dtd html 4.01 frameset//") || strings.HasPrefix(pub, "-//w3c//dtd html 4.01 transitional//")) {
+		return true
+	}
+	return false
+}
+
+func quotedStrings(s string) []string {
+	var out []string
+	for {
+		i := strings.IndexAny(s, "\"'")
+		if i < 0 {
+			return out
+		}
+		q := s[i]
+		j := strings.IndexByte(s[i+1:], q)
+		if j < 0 {
+			return out
+		}
+		out = append(out, s[i+1:i+1+j])
+		s = s[i+2+j:]
+	}
 }
 
 func (p *parser) current() *Node {
@@ -533,6 +597,10 @@ func (p *parser) run() {
 func (p *parser) process(tok token) {
 	switch tok.typ {
 	case tDoctype:
+		if p.doctype == nil {
+			d := tok.data
+			p.doctype = &d
+		}
 		if p.html == nil {
 			p.doc.AppendChild(&Node{Type: DoctypeNode, Data: tok.data})
 		}
@@ -680,7 +748,10 @@ func (p *parser) start(tok token) {
 				p.popTo(i)
 			}
 		}
-		p.closeP()
+		// In quirks mode, tables do not close paragraphs.
+		if !(tag == "table" && p.quirks()) {
+			p.closeP()
+		}
 		if strings.HasPrefix(tag, "h") && len(tag) == 2 && tag[1] >= '1' && tag[1] <= '6' {
 			cur := p.current().Tag
 			if len(cur) == 2 && cur[0] == 'h' && cur[1] >= '1' && cur[1] <= '6' {

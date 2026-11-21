@@ -75,38 +75,6 @@ type sideInfo struct {
 	color css.Color
 }
 
-// clipSide clips to the trapezoid of a border side (0 top, 1 right, 2
-// bottom, 3 left).
-func (cv *canvas) clipSide(outer rect, w [4]float64, side int) {
-	x0, y0, x1, y1 := outer.x, outer.y, outer.x+outer.w, outer.y+outer.h
-	ix0, iy0, ix1, iy1 := x0+w[3], y0+w[0], x1-w[1], y1-w[2]
-	c := cv.c
-	switch side {
-	case 0:
-		c.MoveTo(x0, y0)
-		c.LineTo(x1, y0)
-		c.LineTo(ix1, iy0)
-		c.LineTo(ix0, iy0)
-	case 1:
-		c.MoveTo(x1, y0)
-		c.LineTo(x1, y1)
-		c.LineTo(ix1, iy1)
-		c.LineTo(ix1, iy0)
-	case 2:
-		c.MoveTo(x1, y1)
-		c.LineTo(x0, y1)
-		c.LineTo(ix0, iy1)
-		c.LineTo(ix1, iy1)
-	case 3:
-		c.MoveTo(x0, y1)
-		c.LineTo(x0, y0)
-		c.LineTo(ix0, iy0)
-		c.LineTo(ix0, iy1)
-	}
-	c.ClosePath()
-	c.Clip()
-}
-
 func (cv *canvas) fillRing(outer rect, or [4][2]float64, w [4]float64) {
 	inner := rect{outer.x + w[3], outer.y + w[0], outer.w - w[1] - w[3], outer.h - w[0] - w[2]}
 	pathRounded(cv.c, outer, or)
@@ -134,107 +102,153 @@ func (cv *canvas) drawBorders(b *layout.Box) {
 	cv.drawBorderSides(borderRect(b), outerRadii(b), sides)
 }
 
+// drawBorderSides paints the borders of a box like WeasyPrint's
+// draw_border: rounded rings for simple uniform borders, stroked lines
+// for uniform dotted and dashed borders without radii, and otherwise each
+// side clipped to its segment.
 func (cv *canvas) drawBorderSides(outer rect, or [4][2]float64, sides [4]sideInfo) {
 	var widths [4]float64
+	styles := [4]string{}
+	any := false
 	for i, s := range sides {
-		if s.style != "none" && s.style != "hidden" && !s.color.IsTransparent() {
-			widths[i] = s.width
+		widths[i] = s.width
+		if s.style == "none" || s.style == "hidden" {
+			widths[i] = 0
+		}
+		if widths[i] > 0 {
+			any = true
+		}
+		styles[i] = s.style
+		if s.color.IsTransparent() {
+			styles[i] = ""
 		}
 	}
-	allWidths := [4]float64{sides[0].width, sides[1].width, sides[2].width, sides[3].width}
-	// Fast path: identical solid sides.
-	same := true
-	for i := 1; i < 4; i++ {
-		if sides[i].style != sides[0].style || sides[i].color != sides[0].color || widths[i] == 0 {
-			same = false
+	if !any {
+		return
+	}
+	sameStyle, sameColor, sameWidth, four := true, true, true, true
+	for i := 0; i < 4; i++ {
+		if styles[i] != styles[0] {
+			sameStyle = false
+		}
+		if sides[i].color != sides[0].color {
+			sameColor = false
+		}
+		if widths[i] != widths[0] {
+			sameWidth = false
+		}
+		if widths[i] == 0 {
+			four = false
 		}
 	}
-	if same && sides[0].style == "solid" && widths[0] > 0 {
+	if sameStyle && sameColor && four && (styles[0] == "solid" || styles[0] == "double") {
 		cv.c.Save()
-		cv.setFill(sides[0].color)
-		cv.fillRing(outer, or, allWidths)
+		cv.drawRoundedBorder(outer, or, widths, styles[0], [2]css.Color{sides[0].color})
 		cv.c.Restore()
 		return
 	}
-	for i := 0; i < 4; i++ {
-		s := sides[i]
-		if widths[i] <= 0 {
+	if sameStyle && sameColor && four && sameWidth && !hasRadii(or) && (styles[0] == "dotted" || styles[0] == "dashed") {
+		cv.c.Save()
+		cv.drawDottedDashed(outer, styles[0], widths[0], sides[0].color)
+		cv.c.Restore()
+		return
+	}
+	// Sides are drawn one by one, in WeasyPrint's order.
+	for _, i := range []int{2, 3, 1, 0} {
+		if widths[i] <= 0 || styles[i] == "" {
 			continue
 		}
 		cv.c.Save()
-		cv.clipSide(outer, allWidths, i)
-		cv.drawSide(outer, or, allWidths, i, s)
+		clipBorderSegment(cv.c, styles[i], widths[i], i, outer, widths, or)
+		cv.drawRoundedBorder(outer, or, widths, styles[i], styledColor(styles[i], sides[i].color, i))
 		cv.c.Restore()
 	}
 }
 
-func (cv *canvas) drawSide(outer rect, or [4][2]float64, w [4]float64, side int, s sideInfo) {
-	switch s.style {
-	case "solid":
-		cv.setFill(s.color)
-		cv.fillRing(outer, or, w)
-	case "double":
-		cv.setFill(s.color)
-		third := [4]float64{w[0] / 3, w[1] / 3, w[2] / 3, w[3] / 3}
-		cv.fillRing(outer, or, third)
-		inner := rect{outer.x + 2*third[3], outer.y + 2*third[0], outer.w - 2*third[1] - 2*third[3], outer.h - 2*third[0] - 2*third[2]}
-		cv.fillRing(inner, shrinkRadii(or, 2*third[0], 2*third[1], 2*third[2], 2*third[3]), third)
-	case "groove", "ridge":
-		half := [4]float64{w[0] / 2, w[1] / 2, w[2] / 2, w[3] / 2}
-		inner, outerCol := darken(s.color), lighten(s.color)
-		if (side == 0 || side == 3) != (s.style == "ridge") {
-			inner, outerCol = lighten(s.color), darken(s.color)
-		}
-		cv.setFill(outerCol)
-		cv.fillRing(outer, or, half)
-		in := rect{outer.x + half[3], outer.y + half[0], outer.w - half[1] - half[3], outer.h - half[0] - half[2]}
-		cv.setFill(inner)
-		cv.fillRing(in, shrinkRadii(or, half[0], half[1], half[2], half[3]), half)
+// styledColor returns the colors of inset, outset, ridge and groove
+// borders (two colors, inner half first, for ridge and groove).
+func styledColor(style string, c css.Color, side int) [2]css.Color {
+	topLeft := side == 0 || side == 3
+	switch style {
 	case "inset", "outset":
-		col := darken(s.color)
-		if (side == 0 || side == 3) != (s.style == "inset") {
-			col = lighten(s.color)
+		if topLeft != (style == "inset") {
+			return [2]css.Color{lighten(c)}
 		}
-		cv.setFill(col)
-		cv.fillRing(outer, or, w)
-	case "dashed", "dotted":
-		width := w[side]
-		cv.setStroke(s.color)
-		cv.c.SetLineWidth(width)
-		half := width / 2
-		inset := 0.0
-		if s.style == "dotted" {
-			inset = half
-			cv.c.SetLineCap(1)
+		return [2]css.Color{darken(c)}
+	case "ridge", "groove":
+		if topLeft != (style == "ridge") {
+			return [2]css.Color{lighten(c), darken(c)}
 		}
-		x0, y0, x1, y1 := outer.x, outer.y, outer.x+outer.w, outer.y+outer.h
-		var ax, ay, bx, by, length float64
-		switch side {
-		case 0:
-			ax, ay, bx, by, length = x0+inset, y0+half, x1-inset, y0+half, outer.w
-		case 1:
-			ax, ay, bx, by, length = x1-half, y0+inset, x1-half, y1-inset, outer.h
-		case 2:
-			ax, ay, bx, by, length = x0+inset, y1-half, x1-inset, y1-half, outer.w
-		case 3:
-			ax, ay, bx, by, length = x0+half, y0+inset, x0+half, y1-inset, outer.h
-		}
-		if s.style == "dotted" {
+		return [2]css.Color{darken(c), lighten(c)}
+	}
+	return [2]css.Color{c}
+}
+
+// drawRoundedBorder fills the border ring (WeasyPrint's draw_rounded_box).
+func (cv *canvas) drawRoundedBorder(outer rect, or [4][2]float64, w [4]float64, style string, colors [2]css.Color) {
+	ratio := func(f float64) (rect, [4][2]float64) {
+		t, r, b, l := w[0]*f, w[1]*f, w[2]*f, w[3]*f
+		return rect{outer.x + l, outer.y + t, outer.w - l - r, outer.h - t - b}, shrinkRadii(or, t, r, b, l)
+	}
+	padding, pr := ratio(1)
+	if style == "ridge" || style == "groove" {
+		half, hr := ratio(0.5)
+		cv.setFill(colors[0])
+		pathRounded(cv.c, padding, pr)
+		pathRounded(cv.c, half, hr)
+		cv.c.FillEvenOdd()
+		cv.setFill(colors[1])
+		pathRounded(cv.c, half, hr)
+		pathRounded(cv.c, outer, or)
+		cv.c.FillEvenOdd()
+		return
+	}
+	cv.setFill(colors[0])
+	pathRounded(cv.c, padding, pr)
+	if style == "double" {
+		a, ar := ratio(1.0 / 3)
+		b, br := ratio(2.0 / 3)
+		pathRounded(cv.c, a, ar)
+		pathRounded(cv.c, b, br)
+	}
+	pathRounded(cv.c, outer, or)
+	cv.c.FillEvenOdd()
+}
+
+// drawDottedDashed strokes a uniform dotted or dashed border without
+// rounded corners, with dots or dashes on each corner.
+func (cv *canvas) drawDottedDashed(outer rect, style string, width float64, col css.Color) {
+	half := width / 2
+	inset := 0.0
+	if style == "dotted" {
+		inset = half
+	}
+	dash := func(length float64) []float64 {
+		if style == "dotted" {
 			count := math.Max(2, math.Floor(length/(2*width))+1)
-			cv.c.SetDash([]float64{0, (length - width) / (count - 1)}, 0)
-		} else {
-			count := math.Floor(length/(6*width)) + 1
-			d := length / (2*count - 1)
-			cv.c.SetDash([]float64{d, d}, 0)
+			return []float64{0, (length - width) / (count - 1)}
 		}
-		if hasRadii(or) {
-			half4 := [4]float64{w[0] / 2, w[1] / 2, w[2] / 2, w[3] / 2}
-			mid := rect{outer.x + half4[3], outer.y + half4[0], outer.w - half4[1] - half4[3], outer.h - half4[0] - half4[2]}
-			pathRounded(cv.c, mid, shrinkRadii(or, half4[0], half4[1], half4[2], half4[3]))
-		} else {
-			cv.c.MoveTo(ax, ay)
-			cv.c.LineTo(bx, by)
-		}
+		count := math.Floor(length/(6*width)) + 1
+		d := length / (2*count - 1)
+		return []float64{d, d}
+	}
+	cv.setStroke(col)
+	cv.c.SetLineWidth(width)
+	if style == "dotted" {
+		cv.c.SetLineCap(1)
+	} else {
+		cv.c.SetLineCap(0)
+	}
+	x, y, w, h := outer.x, outer.y, outer.w, outer.h
+	for _, s := range [][5]float64{
+		{x + inset, y + half, x + w - inset, y + half, w},
+		{x + w - half, y + inset, x + w - half, y + h - inset, h},
+		{x + inset, y + h - half, x + w - inset, y + h - half, w},
+		{x + half, y + inset, x + half, y + h - inset, h},
+	} {
+		cv.c.SetDash(dash(s[4]), 0)
+		cv.c.MoveTo(s[0], s[1])
+		cv.c.LineTo(s[2], s[3])
 		cv.c.Stroke()
 	}
 }

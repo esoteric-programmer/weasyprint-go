@@ -96,10 +96,23 @@ func (s *Shaper) Faces(spec Spec) []*fonts.Face {
 	req := fonts.Request{Weight: spec.Weight, Italic: spec.Italic, Stretch: spec.Stretch}
 	var out []*fonts.Face
 	seen := map[*fonts.Font]bool{}
-	for _, fam := range spec.Families {
-		if f := s.Lib.Resolve(fam, req); f != nil && !seen[f.Font] {
-			seen[f.Font] = true
-			out = append(out, f)
+	if ordered, ok := s.Lib.OrderedFamilies(spec.Families); ok {
+		// Families in fontconfig order, as Pango selects them.
+		for _, fam := range ordered {
+			if f := s.Lib.ResolveExact(fam, req); f != nil && !seen[f.Font] {
+				seen[f.Font] = true
+				out = append(out, f)
+				if len(out) >= 8 {
+					break
+				}
+			}
+		}
+	} else {
+		for _, fam := range spec.Families {
+			if f := s.Lib.Resolve(fam, req); f != nil && !seen[f.Font] {
+				seen[f.Font] = true
+				out = append(out, f)
+			}
 		}
 	}
 	if len(out) == 0 {

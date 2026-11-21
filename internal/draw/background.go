@@ -115,6 +115,10 @@ func hasRadii(r [4][2]float64) bool {
 
 const kappa = 0.5522847498
 
+// roundedCtrl places the Bézier control points of rounded corners, as in
+// WeasyPrint's rounded_box.
+const roundedCtrl = 0.45
+
 // pathRounded adds a (rounded) rectangle path.
 func pathRounded(c *pdf.Content, rc rect, r [4][2]float64) {
 	if !hasRadii(r) {
@@ -125,19 +129,19 @@ func pathRounded(c *pdf.Content, rc rect, r [4][2]float64) {
 	c.MoveTo(x0+r[0][0], y0)
 	c.LineTo(x1-r[1][0], y0)
 	if r[1][0] > 0 && r[1][1] > 0 {
-		c.CurveTo(x1-r[1][0]*(1-kappa), y0, x1, y0+r[1][1]*(1-kappa), x1, y0+r[1][1])
+		c.CurveTo(x1-r[1][0]*roundedCtrl, y0, x1, y0+r[1][1]*roundedCtrl, x1, y0+r[1][1])
 	}
 	c.LineTo(x1, y1-r[2][1])
 	if r[2][0] > 0 && r[2][1] > 0 {
-		c.CurveTo(x1, y1-r[2][1]*(1-kappa), x1-r[2][0]*(1-kappa), y1, x1-r[2][0], y1)
+		c.CurveTo(x1, y1-r[2][1]*roundedCtrl, x1-r[2][0]*roundedCtrl, y1, x1-r[2][0], y1)
 	}
 	c.LineTo(x0+r[3][0], y1)
 	if r[3][0] > 0 && r[3][1] > 0 {
-		c.CurveTo(x0+r[3][0]*(1-kappa), y1, x0, y1-r[3][1]*(1-kappa), x0, y1-r[3][1])
+		c.CurveTo(x0+r[3][0]*roundedCtrl, y1, x0, y1-r[3][1]*roundedCtrl, x0, y1-r[3][1])
 	}
 	c.LineTo(x0, y0+r[0][1])
 	if r[0][0] > 0 && r[0][1] > 0 {
-		c.CurveTo(x0, y0+r[0][1]*(1-kappa), x0+r[0][0]*(1-kappa), y0, x0+r[0][0], y0)
+		c.CurveTo(x0, y0+r[0][1]*roundedCtrl, x0+r[0][0]*roundedCtrl, y0, x0+r[0][0], y0)
 	}
 	c.ClosePath()
 }

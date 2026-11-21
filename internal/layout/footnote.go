@@ -116,7 +116,31 @@ func (c *Context) layoutFootnote(f *Box) bool {
 		c.fn.claim[f] = c.PageIndex
 	}
 	c.fn.current = append(c.fn.current, f)
+	// Footnotes called inside this footnote follow it.
+	for _, n := range nestedFootnotes(f) {
+		if c.fn.state[n] == fnPending {
+			c.fn.state[n] = fnCurrent
+			if _, ok := c.fn.claim[n]; !ok {
+				c.fn.claim[n] = c.PageIndex
+			}
+			c.fn.current = append(c.fn.current, n)
+		}
+	}
 	return c.updateFootnoteArea()
+}
+
+// nestedFootnotes returns the footnotes called inside a footnote.
+func nestedFootnotes(f *Box) []*Box {
+	var out []*Box
+	for _, ch := range f.Children {
+		ch.Descendants(func(d *Box) {
+			if d.Footnote != nil {
+				out = append(out, d.Footnote)
+				out = append(out, nestedFootnotes(d.Footnote)...)
+			}
+		})
+	}
+	return out
 }
 
 // unlayoutFootnote returns a footnote of the current page to the pending
@@ -129,10 +153,15 @@ func (c *Context) unlayoutFootnote(f *Box) {
 	if p, ok := c.fn.claim[f]; !ok || p != c.PageIndex {
 		return
 	}
-	delete(c.fn.claim, f)
-	c.fn.state[f] = fnPending
-	c.fn.current = removeBox(c.fn.current, f)
-	c.fn.reported = removeBox(c.fn.reported, f)
+	for _, g := range append([]*Box{f}, nestedFootnotes(f)...) {
+		if p, ok := c.fn.claim[g]; !ok || p != c.PageIndex {
+			continue
+		}
+		delete(c.fn.claim, g)
+		c.fn.state[g] = fnPending
+		c.fn.current = removeBox(c.fn.current, g)
+		c.fn.reported = removeBox(c.fn.reported, g)
+	}
 	c.updateFootnoteArea()
 }
 
