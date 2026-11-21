@@ -104,6 +104,7 @@ func (c *Context) LayoutDocument(root *Box) []*Page {
 		}
 		c.forcedBreak = forced && index > 0
 		c.PageBottom = page.ContentY() + page.H
+		c.PageTop = page.ContentY()
 		abs, fixed := &absList{}, &absList{}
 		r := root
 		r.X, r.Y = page.ContentX(), page.ContentY()

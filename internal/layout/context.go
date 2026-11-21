@@ -31,7 +31,8 @@ type Context struct {
 	excluded    []*Box
 	bfcStack    [][]*Box
 	PageBottom  float64
-	PageIndex   int // 0-based index of the page being laid out
+	PageTop     float64 // top of the page content area
+	PageIndex   int     // 0-based index of the page being laid out
 	forcedBreak bool
 
 	// Running elements and string sets seen so far, by name.

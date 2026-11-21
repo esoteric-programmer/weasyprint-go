@@ -677,8 +677,9 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 	ng.Y = y
 	ng.W = table.W
 	start := 0
+	var rowSkip Skip
 	if skip != nil {
-		start, _ = skipFirst(skip)
+		start, rowSkip = skipFirst(skip)
 		ng.NoStartDecor = true
 	}
 	rows := g.Children
@@ -705,12 +706,22 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 		if v, ok := lengthOrAuto(row.Style, css.PHeight, 0); ok && !isPercentStyle(row.Style, css.PHeight) {
 			rowH = v
 		}
-		for _, cell := range row.Children {
-			nc := c.layoutCell(cell, table, ti, posY)
+		continuing := ri == start && rowSkip != nil
+		for ci, cell := range row.Children {
+			var nc *Box
+			if continuing {
+				cs, has := rowSkip[ci]
+				nc, _ = c.layoutCellPagedInf(cell, table, ti, posY, cs, !has)
+			} else {
+				nc = c.layoutCell(cell, table, ti, posY)
+			}
 			cells = append(cells, nc)
 			if cell.Rowspan <= 1 {
 				rowH = math.Max(rowH, nc.BorderHeight())
 			}
+		}
+		if continuing {
+			nr.NoStartDecor = true
 		}
 		heights[ri] = rowH
 		// Rowspan cells ending in this row.
@@ -738,13 +749,54 @@ func (c *Context) layoutRowGroupPaged(g, table *Box, ti *tableInfo, y float64, s
 		}
 		rowH = heights[ri]
 		// Page break check.
-		if c.overflowsPage(bottomSpace, posY+rowH) && !(pageIsEmpty && len(out) == 0) {
-			removePlaceholders(cells, abs, fixed)
-			if len(out) == 0 {
-				return nil, 0, nil, 0
+		if c.overflowsPage(bottomSpace, posY+rowH) {
+			canMove := len(out) > 0 || !pageIsEmpty
+			fitsFreshPage := rowH <= c.PageBottom-c.PageTop-bottomSpace
+			avoid := row.Style.Kw(css.PBreakInside) != "auto"
+			if canMove && (avoid || (fitsFreshPage && !continuing)) {
+				removePlaceholders(cells, abs, fixed)
+				if len(out) == 0 {
+					return nil, 0, nil, 0
+				}
+				if continuing {
+					resume = Skip{ri: rowSkip}
+				} else {
+					resume = Skip{ri: nil}
+				}
+				break
 			}
-			resume = Skip{ri: nil}
-			break
+			if !math.IsInf(c.PageBottom, 1) {
+				// Split the row: fragment each cell at the page bottom.
+				cellSkips := Skip{}
+				cells = cells[:0]
+				for ci, cell := range row.Children {
+					var cs Skip
+					has := true
+					if continuing {
+						cs, has = rowSkip[ci]
+					}
+					nc, rs := c.layoutCellPaged(cell, table, ti, posY, cs, true, !has, bottomSpace)
+					cells = append(cells, nc)
+					if rs != nil {
+						cellSkips[ci] = rs
+					}
+				}
+				if len(cellSkips) > 0 {
+					rowH = math.Max(0, c.PageBottom-bottomSpace-posY)
+					heights[ri] = rowH
+					nr.H = rowH
+					nr.NoEndDecor = true
+					out = append(out, laid{nr, cells})
+					posY += rowH + ti.spacingV
+					resume = Skip{ri: cellSkips}
+					break
+				}
+				rowH = 0
+				for _, nc := range cells {
+					rowH = math.Max(rowH, nc.BorderHeight())
+				}
+				heights[ri] = rowH
+			}
 		}
 		nr.H = rowH
 		out = append(out, laid{nr, cells})
@@ -798,6 +850,14 @@ func indexOfRow(rows []*Box, r *Box) int {
 }
 
 func (c *Context) layoutCell(cell, table *Box, ti *tableInfo, y float64) *Box {
+	nc, _ := c.layoutCellPaged(cell, table, ti, y, nil, false, false, 0)
+	return nc
+}
+
+// layoutCellPaged lays out a cell. If constrained, the cell content is
+// fragmented at the page bottom and the resume skip is returned. If empty,
+// the cell is a continuation whose content is already finished.
+func (c *Context) layoutCellPaged(cell, table *Box, ti *tableInfo, y float64, skip Skip, constrained, empty bool, bottomSpace float64) (*Box, Skip) {
 	nc := cell.Copy()
 	resolvePercentages(nc, table.W)
 	nc.MT, nc.MB, nc.ML, nc.MR = 0, 0, 0, 0
@@ -824,25 +884,51 @@ func (c *Context) layoutCell(cell, table *Box, ti *tableInfo, y float64) *Box {
 	nc.X, nc.Y = x, y
 	nc.W = math.Max(0, w-nc.PL-nc.PR-nc.BL-nc.BR)
 	nc.H = math.NaN()
+	if empty {
+		nc.Children = nil
+		nc.NoStartDecor = true
+		nc.H = 0
+		nc.CellEmpty = true
+		return nc, nil
+	}
 	saved := c.PageBottom
-	c.PageBottom = math.Inf(1)
+	bs := math.Inf(-1)
+	if constrained {
+		bs = bottomSpace + nc.PB + nc.BB
+	} else {
+		c.PageBottom = math.Inf(1)
+	}
 	c.createBFC()
-	res := c.blockContainerLayout(nc, math.Inf(-1), nil, true, &absList{}, &absList{}, nil, false, cbInfo{W: table.W, HAuto: true, Style: table.Style})
+	res := c.blockContainerLayout(nc, bs, skip, true, &absList{}, &absList{}, nil, false, cbInfo{W: table.W, HAuto: true, Style: table.Style})
 	c.finishBFC(res.box)
 	c.PageBottom = saved
 	out := res.box
+	resume := res.resume
 	if out == nil {
 		out = nc
-	}
-	contentH := out.H
-	if v, ok := lengthOrAuto(cell.Style, css.PHeight, 0); ok && !isPercentStyle(cell.Style, css.PHeight) {
-		v -= boxSizingHeight(out)
-		if v > contentH {
-			out.H = v
+		out.Children = nil
+		out.H = 0
+		resume = skip
+		if resume == nil {
+			resume = Skip{0: nil}
 		}
 	}
+	if skip != nil {
+		out.NoStartDecor = true
+	}
+	if !constrained || resume == nil {
+		if v, ok := lengthOrAuto(cell.Style, css.PHeight, 0); ok && !isPercentStyle(cell.Style, css.PHeight) {
+			v -= boxSizingHeight(out)
+			if v > out.H {
+				out.H = v
+			}
+		}
+	}
+	if resume != nil {
+		out.NoEndDecor = true
+	}
 	out.CellEmpty = cellIsEmpty(out)
-	return out
+	return out, resume
 }
 
 func cellIsEmpty(b *Box) bool {
@@ -1192,4 +1278,9 @@ type BorderEdge struct {
 	Width float64
 	Style string
 	Color css.Color
+}
+
+// layoutCellPagedInf lays out a continued cell without page constraint.
+func (c *Context) layoutCellPagedInf(cell, table *Box, ti *tableInfo, y float64, skip Skip, empty bool) (*Box, Skip) {
+	return c.layoutCellPaged(cell, table, ti, y, skip, false, empty, 0)
 }

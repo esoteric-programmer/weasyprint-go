@@ -84,6 +84,26 @@ func TestOverflowPagination(t *testing.T) {
 	}
 }
 
+func TestTallRowsFlexGridSplitAcrossPages(t *testing.T) {
+	var lines strings.Builder
+	for i := 0; i < 100; i++ {
+		lines.WriteString("<p>Line " + strconv.Itoa(i) + "</p>")
+	}
+	style := `<style>@page { size: A6 } p { margin: 0; line-height: 20px; font-size: 10px }</style>`
+	cases := map[string]string{
+		"table row":   `<table><tr><td>` + lines.String() + `</td><td>side</td></tr></table>`,
+		"row flex":    `<div style="display:flex"><div>` + lines.String() + `</div><div>side</div></div>`,
+		"column flex": `<div style="display:flex;flex-direction:column">` + lines.String() + `</div>`,
+		"grid":        `<div style="display:grid;grid-template-columns:1fr 50px"><div>` + lines.String() + `</div><div>side</div></div>`,
+	}
+	for name, body := range cases {
+		doc, _ := render(t, style+body, nil)
+		if len(doc.Pages) < 5 {
+			t.Errorf("%s: got %d pages, want at least 5", name, len(doc.Pages))
+		}
+	}
+}
+
 func TestLinksAndBookmarks(t *testing.T) {
 	_, pdf := render(t, `<h1 id="top">Title</h1><h2>Sub</h2><p><a href="#top">internal</a> <a href="https://example.com/">external</a></p>`, nil)
 	for _, want := range []string{"/Subtype /Link", "/URI (https://example.com/)", "/Dest /top", "/Outlines", "/Title (Sub)"} {

@@ -17,6 +17,7 @@ type flexItem struct {
 	laid             *Box
 	cross            float64 // outer cross size
 	grow, shrink     float64
+	done             bool // finished on a previous page
 }
 
 func (c *Context) flexContentWidth(box *Box, outer, minimum bool) float64 {
@@ -45,6 +46,10 @@ func isColumn(s *css.Style) bool {
 }
 
 func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, cbi cbInfo, pageIsEmpty bool, abs, fixed *absList) blockResult {
+	column0 := isColumn(box.Style)
+	if column0 && skip != nil && !math.IsInf(c.PageBottom, 1) {
+		return c.flexAsBlock(box, bottomSpace, skip, cbi, pageIsEmpty, abs, fixed)
+	}
 	if box.EstablishesBFC() {
 		c.createBFC()
 	}
@@ -250,6 +255,99 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 	if len(lines) == 1 && (column || !math.IsNaN(specH)) {
 		lineCross[0] = crossSize
 	}
+	// Pagination of row flex lines.
+	var resume Skip
+	paged := !column && !math.IsInf(c.PageBottom, 1) && !box.IsInline && !math.IsInf(bottomSpace, -1)
+	if paged {
+		index := map[*flexItem]int{}
+		for i, it := range items {
+			index[it] = i
+		}
+		limit := c.PageBottom - bottomSpace - box.PB - box.BB
+		top := box.ContentY()
+		total := 0.0
+		for i, lc := range lineCross {
+			total += lc
+			if i > 0 {
+				total += gapCross
+			}
+		}
+		startLine := 0
+		var itemSkips Skip
+		if skip != nil {
+			k, v := skipFirst(skip)
+			for li, line := range lines {
+				if index[line[0]] == k {
+					startLine = li
+				}
+			}
+			itemSkips = v
+		}
+		if skip != nil || top+total > limit+1e-6 {
+			var keepLines [][]*flexItem
+			var keepCross []float64
+			y := top
+			for li := startLine; li < len(lines); li++ {
+				line := lines[li]
+				cont := li == startLine && itemSkips != nil
+				if cont {
+					lineCross[li] = 0
+					for _, it := range line {
+						sk, has := itemSkips[index[it]]
+						it.done = !has
+						it.laid, _ = c.layoutFlexItemPaged(it.box, it.target, itemCB, sk, !has, false, y, 0)
+						it.cross = it.laid.MarginHeight()
+						lineCross[li] = math.Max(lineCross[li], it.cross)
+					}
+				}
+				lc := lineCross[li]
+				if y+lc > limit+1e-6 {
+					canMove := len(keepLines) > 0 || !pageIsEmpty
+					if canMove && !cont && lc <= c.PageBottom-c.PageTop-bottomSpace {
+						resume = Skip{index[line[0]]: nil}
+						break
+					}
+					sks := Skip{}
+					lc = 0
+					for _, it := range line {
+						var sk Skip
+						has := true
+						if cont {
+							sk, has = itemSkips[index[it]]
+						}
+						var rs Skip
+						it.laid, rs = c.layoutFlexItemPaged(it.box, it.target, itemCB, sk, !has, true, y, bottomSpace+box.PB+box.BB)
+						it.cross = it.laid.MarginHeight()
+						lc = math.Max(lc, it.cross)
+						if rs != nil {
+							sks[index[it]] = rs
+						}
+					}
+					if len(sks) > 0 {
+						lc = math.Max(lc, limit-y)
+						keepLines = append(keepLines, line)
+						keepCross = append(keepCross, lc)
+						resume = Skip{index[line[0]]: sks}
+						break
+					}
+				}
+				keepLines = append(keepLines, line)
+				keepCross = append(keepCross, lc)
+				y += lc + gapCross
+			}
+			lines, lineCross = keepLines, keepCross
+			crossSize = 0
+			for i, lc := range lineCross {
+				crossSize += lc
+				if i > 0 {
+					crossSize += gapCross
+				}
+			}
+		} else {
+			paged = false
+		}
+	}
+
 	// align-content.
 	totalCross := 0.0
 	for i, lc := range lineCross {
@@ -288,6 +386,9 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 	cx, cy := box.ContentX(), box.ContentY()
 	crossPos := crossStart
 	lineOrder := make([]int, len(lines))
+	if resume != nil || skip != nil {
+		crossStart, crossBetween = 0, 0
+	}
 	for i := range lineOrder {
 		lineOrder[i] = i
 	}
@@ -390,13 +491,25 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 				b.Translate(cx+pos-b.X, cy+crossPos+off-b.Y)
 				pos += b.MarginWidth() + gapMain + between
 			}
+			if it.done {
+				continue
+			}
 			children = append(children, b)
 		}
 		mainUsed = math.Max(mainUsed, pos-gapMain-between)
 		crossPos += lc + gapCross + crossBetween
 	}
 	nb := box.CopyWith(children)
-	if !math.IsNaN(specH) {
+	if skip != nil {
+		nb.NoStartDecor = true
+	}
+	if paged && (resume != nil || skip != nil) {
+		nb.H = math.Max(0, crossSize)
+		if resume != nil {
+			nb.NoEndDecor = true
+			nb.MB, nb.PB, nb.BB = 0, 0, 0
+		}
+	} else if !math.IsNaN(specH) {
 		nb.H = specH
 	} else if column {
 		nb.H = math.Max(0, mainUsed)
@@ -418,7 +531,73 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 	}
 	np := nextPage{Break: "any", set: true}
 	_, np.Page = pageValues(nb)
-	return blockResult{box: nb, next: np}
+	// Column flex containers taller than the page are paginated as a
+	// block flow.
+	if column && !math.IsInf(c.PageBottom, 1) && !box.IsInline && !math.IsInf(bottomSpace, -1) &&
+		c.overflowsPage(bottomSpace, nb.BorderBoxY()+nb.BorderHeight()) {
+		removePlaceholders([]*Box{nb}, abs, fixed)
+		return c.flexAsBlock(box, bottomSpace, nil, cbi, pageIsEmpty, abs, fixed)
+	}
+	return blockResult{box: nb, next: np, resume: resume}
+}
+
+// flexAsBlock lays out a flex container as a block container, used to
+// paginate column flex containers.
+func (c *Context) flexAsBlock(box *Box, bottomSpace float64, skip Skip, cbi cbInfo, pageIsEmpty bool, abs, fixed *absList) blockResult {
+	b := box.CopyWith(box.Children)
+	b.Kind = KBlock
+	b.Orig = box.Original()
+	resolvePercentages(b, cbi.W)
+	b.W = specifiedWidth(b, cbi.W)
+	b.H = math.NaN()
+	blockLevelWidth(b, cbi.W, true)
+	b.MT, b.MB = nanTo0(b.MT), nanTo0(b.MB)
+	res := c.blockContainerLayout(b, bottomSpace, skip, pageIsEmpty, abs, fixed, nil, false, cbi)
+	if res.box != nil {
+		res.box.Kind = KBlock
+	}
+	return res
+}
+
+// layoutFlexItemPaged lays out a flex item at vertical position y, possibly
+// fragmenting it at the page bottom, or as an empty continuation box.
+func (c *Context) layoutFlexItemPaged(orig *Box, w float64, cbi cbInfo, skip Skip, empty, constrained bool, y, bottomSpace float64) (*Box, Skip) {
+	b := orig.Copy()
+	b.X, b.Y = 0, y
+	b.W = w
+	b.H = math.NaN()
+	if empty {
+		b.Children = nil
+		b.H = 0
+		b.NoStartDecor = true
+		return b, nil
+	}
+	if b.Kind != KBlock && b.Kind != KInlineBlock {
+		nb := c.layoutFlexItem(orig, w, math.NaN(), cbi)
+		nb.Translate(0, y-nb.Y)
+		return nb, nil
+	}
+	saved := c.PageBottom
+	bs := math.Inf(-1)
+	if constrained {
+		bs = bottomSpace
+	} else {
+		c.PageBottom = math.Inf(1)
+	}
+	c.createBFC()
+	res := c.blockContainerLayout(b, bs, skip, true, &absList{}, &absList{}, nil, false, cbi)
+	c.finishBFC(res.box)
+	c.PageBottom = saved
+	if res.box == nil {
+		b.Children = nil
+		b.H = 0
+		rs := skip
+		if rs == nil {
+			rs = Skip{0: nil}
+		}
+		return b, rs
+	}
+	return res.box, res.resume
 }
 
 func (c *Context) flexItemCrossWidth(b *Box, containerW float64) float64 {

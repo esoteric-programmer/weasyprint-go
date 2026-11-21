@@ -143,7 +143,6 @@ substitutes (Arial → Liberation Sans…) and synthetic bold/italic.
 * Not implemented yet: footnotes (`float: footnote`), `::first-line` and
   `::first-letter`, PDF forms, attachments, PDF/A and PDF/UA variants,
   bleed and crop marks.
-* Table rows, flex and grid containers are not split across pages.
 * A few WeasyPrint quirks are intentionally not reproduced, e.g. the
   near-black colors of `groove`/`ridge`/`inset`/`outset` borders and
   files without a charset being decoded as Windows-1252 even when they

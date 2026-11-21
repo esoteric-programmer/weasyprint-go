@@ -361,6 +361,7 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 	}
 	// Lay out items with their column widths.
 	itemCB := cbInfo{W: box.W, H: specH, HAuto: math.IsNaN(specH), Style: s}
+	widths := map[*gridItem]float64{}
 	for _, it := range items {
 		w := areaSize(cols, it.col, it.colSpan, colGap)
 		b := it.box
@@ -374,6 +375,7 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 		} else if js != "normal" && js != "stretch" && js != "legacy" || b.Kind == KReplaced {
 			cw = math.Min(cw, c.maxContent(b, false))
 		}
+		widths[it] = math.Max(0, cw)
 		it.laid = c.layoutFlexItem(b, math.Max(0, cw), math.NaN(), itemCB)
 		it.outerH = it.laid.MarginHeight()
 	}
@@ -414,6 +416,120 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 		}
 	}
 	total := pos - box.ContentY()
+
+	// Pagination: break between rows, or split a row whose items are
+	// taller than the page.
+	var resume Skip
+	paged := !math.IsInf(c.PageBottom, 1) && !box.IsInline && !math.IsInf(bottomSpace, -1) &&
+		!box.IsFloated() && !box.IsAbsolutelyPositioned() && len(rows) > 0
+	limit := c.PageBottom - bottomSpace - box.PB - box.BB
+	if paged && (skip != nil || box.ContentY()+total > limit+1e-6) {
+		index := map[*gridItem]int{}
+		for i, it := range items {
+			index[it] = i
+		}
+		firstRow := 0
+		var itemSkips Skip
+		if skip != nil {
+			firstRow, itemSkips = skipFirst(skip)
+		}
+		y0 := box.ContentY()
+		cont := map[*gridItem]bool{}
+		var kept []*gridItem
+		contH := 0.0
+		for _, it := range items {
+			if itemSkips != nil {
+				if sk, has := itemSkips[index[it]]; has {
+					it.laid, _ = c.layoutFlexItemPaged(it.box, widths[it], itemCB, sk, false, false, y0, 0)
+					it.outerH = it.laid.MarginHeight()
+					end := it.row + it.rowSpan
+					it.row, it.rowSpan = firstRow, max(1, end-firstRow)
+					cont[it] = true
+					contH = math.Max(contH, it.outerH)
+					kept = append(kept, it)
+					continue
+				}
+				if it.row <= firstRow {
+					continue
+				}
+			} else if it.row < firstRow {
+				continue
+			}
+			kept = append(kept, it)
+		}
+		if firstRow >= len(rows) {
+			firstRow = len(rows) - 1
+		}
+		pos := y0
+		for r := firstRow; r < len(rows); r++ {
+			if r == firstRow && itemSkips != nil {
+				rows[r].base = contH
+			}
+			rows[r].pos = pos
+			pos += rows[r].base + rowGap
+		}
+		lastRow := len(rows) - 1
+		for r := firstRow; r < len(rows); r++ {
+			if rows[r].pos+rows[r].base <= limit+1e-6 {
+				continue
+			}
+			isCont := r == firstRow && itemSkips != nil
+			canMove := r > firstRow || !pageIsEmpty
+			if canMove && !isCont && rows[r].base <= c.PageBottom-c.PageTop-bottomSpace {
+				resume = Skip{r: nil}
+				lastRow = r - 1
+				break
+			}
+			sks := Skip{}
+			for _, it := range kept {
+				if it.row > r || it.row+it.rowSpan <= r {
+					continue
+				}
+				y := rows[it.row].pos
+				if y+it.outerH <= limit+1e-6 {
+					continue
+				}
+				var sk Skip
+				if cont[it] {
+					sk = itemSkips[index[it]]
+				}
+				var rs Skip
+				it.laid, rs = c.layoutFlexItemPaged(it.box, widths[it], itemCB, sk, false, true, y, bottomSpace+box.PB+box.BB)
+				it.outerH = it.laid.MarginHeight()
+				if rs != nil {
+					sks[index[it]] = rs
+				}
+			}
+			if len(sks) == 0 {
+				continue
+			}
+			rows[r].base = math.Max(0, limit-rows[r].pos)
+			resume = Skip{r: sks}
+			lastRow = r
+			break
+		}
+		items = items[:0]
+		for _, it := range kept {
+			if it.row > lastRow {
+				continue
+			}
+			if it.row+it.rowSpan > lastRow+1 {
+				it.rowSpan = lastRow + 1 - it.row
+			}
+			items = append(items, it)
+		}
+		if lastRow >= firstRow {
+			total = rows[lastRow].pos + rows[lastRow].base - y0
+		} else {
+			total = 0
+		}
+		specH = math.NaN()
+		if skip == nil && resume == nil {
+			paged = false
+		}
+	} else {
+		paged = false
+	}
 	// Position items.
 	for _, it := range items {
 		b := it.laid
@@ -457,8 +573,17 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 	if !math.IsNaN(specH) {
 		nb.H = specH
 	}
-	mn, mx := minMaxHeight(nb, cbi)
-	nb.H = math.Max(mn, math.Min(mx, nb.H))
+	if !paged {
+		mn, mx := minMaxHeight(nb, cbi)
+		nb.H = math.Max(mn, math.Min(mx, nb.H))
+	}
+	if skip != nil {
+		nb.NoStartDecor = true
+	}
+	if resume != nil {
+		nb.NoEndDecor = true
+		nb.MB, nb.PB, nb.BB = 0, 0, 0
+	}
 	if box.Style.Kw(css.PPosition) != "static" {
 		for _, a := range abs.boxes {
 			c.absoluteLayout(a, nb, fixed)
@@ -470,7 +595,7 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 	c.finishBFC(nil)
 	np := nextPage{Break: "any", set: true}
 	_, np.Page = pageValues(nb)
-	return blockResult{box: nb, next: np}
+	return blockResult{box: nb, next: np, resume: resume}
 }
 
 func areaSize(tracks []*track, start, span int, gap float64) float64 {
