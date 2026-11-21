@@ -99,6 +99,7 @@ func (r *Resolver) candidates(e *html.Node) []ruleEntry {
 
 type cascadeEntry struct {
 	level     int
+	layer     int
 	spec      Specificity
 	order     int
 	decls     []Decl
@@ -127,6 +128,9 @@ func (c *cascaded) apply(entries []cascadeEntry) {
 		a, b := entries[i], entries[j]
 		if a.level != b.level {
 			return a.level < b.level
+		}
+		if a.layer != b.layer {
+			return a.layer < b.layer
 		}
 		if a.spec != b.spec {
 			return a.spec.Less(b.spec)
@@ -157,7 +161,7 @@ func (c *cascaded) apply(entries []cascadeEntry) {
 	}
 }
 
-func addEntries(entries []cascadeEntry, origin Origin, spec Specificity, order int, decls []Decl) []cascadeEntry {
+func addEntries(entries []cascadeEntry, origin Origin, layer int, spec Specificity, order int, decls []Decl) []cascadeEntry {
 	hasImp, hasNorm := false, false
 	for _, d := range decls {
 		if d.Important {
@@ -167,10 +171,10 @@ func addEntries(entries []cascadeEntry, origin Origin, spec Specificity, order i
 		}
 	}
 	if hasNorm {
-		entries = append(entries, cascadeEntry{levelOf(origin, false), spec, order, decls, false})
+		entries = append(entries, cascadeEntry{levelOf(origin, false), layer, spec, order, decls, false})
 	}
 	if hasImp {
-		entries = append(entries, cascadeEntry{levelOf(origin, true), spec, order, decls, true})
+		entries = append(entries, cascadeEntry{levelOf(origin, true), layer, spec, order, decls, true})
 	}
 	return entries
 }
@@ -186,18 +190,18 @@ func (r *Resolver) ResolveAll() {
 		byPseudo := map[string][]cascadeEntry{}
 		for _, ce := range r.candidates(e) {
 			if ce.sel.Match(e) {
-				byPseudo[ce.sel.PseudoElement] = addEntries(byPseudo[ce.sel.PseudoElement], ce.rule.Origin, ce.sel.Specificity, ce.rule.Order, ce.rule.Decls)
+				byPseudo[ce.sel.PseudoElement] = addEntries(byPseudo[ce.sel.PseudoElement], ce.rule.Origin, layerRank(ce.rule.Layer, ce.rule.layers), ce.sel.Specificity, ce.rule.Order, ce.rule.Decls)
 			}
 		}
 		entries := byPseudo[""]
 		if r.Hints != nil {
 			if hints := r.Hints(e); len(hints) > 0 {
-				entries = addEntries(entries, OriginAuthor, Specificity{}, -1, hints)
+				entries = addEntries(entries, OriginAuthor, math.MaxInt32, Specificity{}, -1, hints)
 			}
 		}
 		if styleAttr, ok := e.Attr("style"); ok {
 			decls := preprocessDecls(ParseInlineDeclarations(styleAttr), &ParseCtx{BaseURL: r.BaseURL}, &Env{})
-			entries = addEntries(entries, OriginAuthor, Specificity{1 << 20, 0, 0}, math.MaxInt32, decls)
+			entries = addEntries(entries, OriginAuthor, math.MaxInt32, Specificity{1 << 20, 0, 0}, math.MaxInt32, decls)
 		}
 		c := newCascaded()
 		c.apply(entries)
@@ -312,12 +316,12 @@ func (r *Resolver) pageEntries(p PageType, margin string) []cascadeEntry {
 			}
 		}
 		if len(pr.Selectors) == 0 {
-			entries = addEntries(entries, pr.Origin, Specificity{}, pr.Order, decls)
+			entries = addEntries(entries, pr.Origin, layerRank(pr.Layer, pr.layers), Specificity{}, pr.Order, decls)
 			continue
 		}
 		for _, ps := range pr.Selectors {
 			if ps.matches(p) {
-				entries = addEntries(entries, pr.Origin, ps.Specificity, pr.Order, decls)
+				entries = addEntries(entries, pr.Origin, layerRank(pr.Layer, pr.layers), ps.Specificity, pr.Order, decls)
 			}
 		}
 	}

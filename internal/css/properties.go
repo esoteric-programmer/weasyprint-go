@@ -218,10 +218,8 @@ func parseDisplay(ts []Token, _ *ParseCtx) Value {
 func parsePositionProp(ts []Token, _ *ParseCtx) Value {
 	if t, ok := single(ts); ok && t.Type == TIdent {
 		switch t.Value {
-		case "static", "relative", "absolute", "fixed", "sticky":
-			if t.Value == "sticky" {
-				return Keyword("relative")
-			}
+		case "static", "relative", "absolute", "fixed":
+			// sticky is invalid, as in WeasyPrint: pages don't scroll.
 			return Keyword(t.Value)
 		}
 	}

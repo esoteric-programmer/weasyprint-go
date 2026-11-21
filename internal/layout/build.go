@@ -563,35 +563,35 @@ func (b *Builder) markerBox(e *html.Node, liStyle *css.Style) *Box {
 }
 
 func (b *Builder) quote(style *css.Style, open bool) string {
-	var quotes []string
+	var opens, closes []string
 	switch q := style.Get(css.PQuotes).(type) {
 	case []string:
-		quotes = q
+		for i := 0; i+1 < len(q); i += 2 {
+			opens, closes = append(opens, q[i]), append(closes, q[i+1])
+		}
 	case css.Keyword:
 		if q == "none" {
 			return ""
 		}
-		quotes = []string{"“", "”", "‘", "’"}
+		// auto: the quotes of the language, like WeasyPrint.
+		lang, _ := style.Get(css.PLang).(css.Str)
+		lq := quotesForLang(string(lang))
+		opens, closes = lq.open, lq.close
 	}
-	if len(quotes) == 0 {
-		return ""
-	}
+	quotes := closes
 	if open {
-		i := b.quoteDepth
-		b.quoteDepth++
-		if 2*i >= len(quotes) {
-			i = len(quotes)/2 - 1
-		}
-		return quotes[2*i]
-	}
-	if b.quoteDepth > 0 {
+		quotes = opens
+	} else if b.quoteDepth > 0 {
 		b.quoteDepth--
 	}
-	i := b.quoteDepth
-	if 2*i+1 >= len(quotes) {
-		i = len(quotes)/2 - 1
+	var out string
+	if len(quotes) > 0 {
+		out = quotes[min(b.quoteDepth, len(quotes)-1)]
 	}
-	return quotes[2*i+1]
+	if open {
+		b.quoteDepth++
+	}
+	return out
 }
 
 func (b *Builder) contentBoxes(style *css.Style, items []css.ContentItem, e *html.Node) []*Box {
@@ -839,4 +839,26 @@ func serializeXML(n *html.Node, sb *strings.Builder) {
 		}
 		sb.WriteString("</" + n.Tag + ">")
 	}
+}
+
+type langQuote struct {
+	lang        string
+	open, close []string
+}
+
+// quotesForLang returns the quotes of quotes: auto, chosen like
+// WeasyPrint's get_lang_quotes: the exact language, else the last
+// language of the table that is a prefix of it.
+func quotesForLang(lang string) langQuote {
+	for _, q := range langQuotes {
+		if q.lang == lang {
+			return q
+		}
+	}
+	for i := len(langQuotes) - 1; i >= 0; i-- {
+		if q := langQuotes[i]; strings.HasPrefix(lang, q.lang) {
+			return q
+		}
+	}
+	return defaultQuotes
 }

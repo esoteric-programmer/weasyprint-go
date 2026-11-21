@@ -118,3 +118,22 @@ func TestSelectors(t *testing.T) {
 		}
 	}
 }
+
+func TestLayersNestingAndIgnoredRules(t *testing.T) {
+	r, d := resolve(t, `<html><body><h1>a</h1><h2>b</h2><h3>c</h3><h4>d</h4><h5>e <b>f</b></h5><h6>g</h6></body></html>`, `
+@layer a, b; @layer b { h1 { color: red } } @layer a { h1 { color: green } }
+h2 { color: green } @layer a { h2 { color: red } }
+@layer base { @layer inner { h3 { color: red } } h3 { color: green } }
+@container (min-width: 1px) { h4 { color: red } }
+@scope (body) { h6 { color: red } }
+h5 { color: red; & b { color: green } }`)
+	red, green, black := Color{1, 0, 0, 1}, Color{0, 128.0 / 255, 0, 1}, Color{0, 0, 0, 1}
+	for _, c := range []struct {
+		tag  string
+		want Color
+	}{{"h1", red}, {"h2", green}, {"h3", green}, {"h4", black}, {"h5", red}, {"b", green}, {"h6", black}} {
+		if got := r.Style(d.Find(c.tag)).Color(PColor); got != c.want {
+			t.Errorf("%s color %v, want %v", c.tag, got, c.want)
+		}
+	}
+}

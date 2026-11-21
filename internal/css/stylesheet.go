@@ -1,6 +1,8 @@
 package css
 
 import (
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/fetch"
@@ -31,6 +33,20 @@ type StyleRule struct {
 	Decls     []Decl
 	Order     int
 	Origin    Origin
+	Layer     string // cascade layer, "" when unlayered
+	layers    *[]string
+}
+
+// layerRank is the priority of a cascade layer, like WeasyPrint's
+// layer_order: its index among the declared layers, unlayered rules last.
+func layerRank(layer string, layers *[]string) int {
+	if layer == "" || layers == nil {
+		return math.MaxInt32
+	}
+	if i := indexOf(*layers, layer); i >= 0 {
+		return i
+	}
+	return math.MaxInt32
 }
 
 // PageSelector is a selector of an @page rule.
@@ -50,6 +66,8 @@ type PageRule struct {
 	MarginDecl map[string][]Decl // margin box name → declarations
 	Order      int
 	Origin     Origin
+	Layer      string
+	layers     *[]string
 }
 
 // FontFaceRule is an @font-face rule.
@@ -79,6 +97,9 @@ type Stylesheet struct {
 	FontFaces     []*FontFaceRule
 	CounterStyles map[string]*CounterStyle
 	BaseURL       string
+	// Layers are the cascade layers of the stylesheets parsed with the
+	// same Env, in priority order (shared between them).
+	Layers *[]string
 }
 
 // Env is the environment needed to parse stylesheets.
@@ -87,7 +108,84 @@ type Env struct {
 	MediaType string
 	Warn      func(string)
 	order     *int
+	layers    *[]string
 	Viewport  [2]float64
+}
+
+func (e *Env) layerList() *[]string {
+	if e.layers == nil {
+		e.layers = new([]string)
+	}
+	return e.layers
+}
+
+// addLayer declares a layer (and its parents), like WeasyPrint's
+// _add_layer: sub-layers come before their parent layer.
+func (e *Env) addLayer(layer string) {
+	layers := e.layerList()
+	index := -1
+	full := ""
+	for _, part := range strings.Split(layer, ".") {
+		if full != "" {
+			full += "."
+		}
+		full += part
+		if i := indexOf(*layers, full); i >= 0 {
+			index = i
+			continue
+		}
+		if index < 0 {
+			*layers = append(*layers, full)
+			index = len(*layers) - 1
+		} else {
+			*layers = append(*layers, "")
+			copy((*layers)[index+1:], (*layers)[index:])
+			(*layers)[index] = full
+			index--
+		}
+	}
+}
+
+func indexOf(list []string, s string) int {
+	for i, v := range list {
+		if v == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// parseLayerName parses a dotted layer name.
+func parseLayerName(ts []Token) (string, bool) {
+	ts = StripWS(ts)
+	name := ""
+	lastDot := true
+	for _, t := range ts {
+		switch {
+		case t.Type == TIdent && lastDot:
+			name += t.Raw
+			if t.Raw == "" {
+				name += t.Value
+			}
+			lastDot = false
+		case t.IsDelim(".") && !lastDot:
+			name += "."
+			lastDot = true
+		case t.Type == TNumber && !lastDot && strings.HasPrefix(t.String(), ".") && !strings.Contains(t.String()[1:], "."):
+			// ".5" is tokenized as a number: not a valid layer name.
+			return "", false
+		default:
+			return "", false
+		}
+	}
+	return name, name != "" && !lastDot
+}
+
+func joinLayer(parent, name string) string {
+	if parent == "" {
+		return name
+	}
+	return parent + "." + name
 }
 
 func (e *Env) nextOrder() int {
@@ -108,24 +206,78 @@ func (e *Env) warn(msg string) {
 func ParseStylesheet(src, baseURL string, origin Origin, env *Env) *Stylesheet {
 	sh := &Stylesheet{Origin: origin, CounterStyles: map[string]*CounterStyle{}, BaseURL: baseURL}
 	rules := ParseStylesheetRules(Tokenize(src))
-	sh.addRules(rules, baseURL, env, 0, true)
+	sh.Layers = env.layerList()
+	sh.addRules(rules, baseURL, env, 0, true, "")
 	return sh
 }
 
-func (sh *Stylesheet) addRules(rules []Rule, baseURL string, env *Env, depth int, allowImport bool) {
+// nestingSelector reports whether ts contain the & nesting selector.
+func nestingSelector(ts []Token) bool {
+	for _, t := range ts {
+		if t.IsDelim("&") {
+			return true
+		}
+	}
+	return false
+}
+
+// replaceNesting replaces & by the given tokens.
+func replaceNesting(ts []Token, with []Token) []Token {
+	var out []Token
+	for _, t := range ts {
+		if t.IsDelim("&") {
+			out = append(out, with...)
+		} else {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// addStyleRule adds a style rule and its nested style rules (CSS
+// nesting): nested selectors are relative to :is(parent), & stands for
+// the parent, and & in a top-level rule means :root, as in WeasyPrint.
+func (sh *Stylesheet) addStyleRule(prelude, content []Token, ctx *ParseCtx, env *Env, layer string, nestedIn []Token) {
+	if nestedIn == nil && nestingSelector(prelude) {
+		prelude = replaceNesting(prelude, []Token{{Type: TColon}, {Type: TIdent, Value: "root", Raw: "root"}})
+	}
+	if nestedIn != nil {
+		is := []Token{{Type: TColon}, {Type: TFunction, Value: "is", Raw: "is", Children: nestedIn}}
+		var full []Token
+		for i, group := range SplitOnComma(prelude) {
+			if i > 0 {
+				full = append(full, Token{Type: TComma})
+			}
+			if nestingSelector(group) {
+				full = append(full, replaceNesting(group, is)...)
+			} else {
+				full = append(full, is...)
+				full = append(full, Token{Type: TWhitespace})
+				full = append(full, StripWS(group)...)
+			}
+		}
+		prelude = full
+	}
+	sels := ParseSelectorList(StripWS(prelude))
+	if sels == nil {
+		env.warn("Invalid or unsupported selector: " + strings.TrimSpace(Serialize(prelude)))
+		return
+	}
+	decls, nested := ParseDeclarations(content)
+	sh.Rules = append(sh.Rules, &StyleRule{Selectors: sels, Decls: preprocessDecls(decls, ctx, env), Order: env.nextOrder(), Origin: sh.Origin, Layer: layer, layers: env.layerList()})
+	for _, n := range nested {
+		if n.AtKeyword == "" {
+			sh.addStyleRule(n.Prelude, n.Content, ctx, env, layer, StripWS(prelude))
+		}
+	}
+}
+
+func (sh *Stylesheet) addRules(rules []Rule, baseURL string, env *Env, depth int, allowImport bool, layer string) {
 	ctx := &ParseCtx{BaseURL: baseURL}
 	for _, r := range rules {
 		switch r.AtKeyword {
 		case "":
-			sels := ParseSelectorList(StripWS(r.Prelude))
-			if sels == nil {
-				env.warn("Invalid or unsupported selector: " + strings.TrimSpace(Serialize(r.Prelude)))
-				continue
-			}
-			decls, nested := ParseDeclarations(r.Content)
-			sr := &StyleRule{Selectors: sels, Decls: preprocessDecls(decls, ctx, env), Order: env.nextOrder(), Origin: sh.Origin}
-			sh.Rules = append(sh.Rules, sr)
-			_ = nested
+			sh.addStyleRule(r.Prelude, r.Content, ctx, env, layer, nil)
 		case "import":
 			if !allowImport || depth > 10 {
 				continue
@@ -153,6 +305,22 @@ func (sh *Stylesheet) addRules(rules []Rule, baseURL string, env *Env, depth int
 					break
 				}
 			}
+			importLayer := layer
+			if len(mediaToks) > 0 {
+				switch t := mediaToks[0]; {
+				case t.Type == TFunction && t.Value == "layer":
+					name, ok := parseLayerName(t.Children)
+					if !ok {
+						env.warn("Invalid layer name in @import: " + Serialize(r.Prelude))
+						continue
+					}
+					importLayer = joinLayer(layer, name)
+					env.addLayer(importLayer)
+				case t.IsIdent("layer"):
+					importLayer = joinLayer(layer, "@anonymous"+strconv.Itoa(len(*env.layerList())))
+					env.addLayer(importLayer)
+				}
+			}
 			mediaToks = stripImportModifiers(mediaToks)
 			if !EvaluateMediaQuery(mediaToks, env) {
 				continue
@@ -171,21 +339,58 @@ func (sh *Stylesheet) addRules(rules []Rule, baseURL string, env *Env, depth int
 			if base == "" {
 				base = u
 			}
-			sh.addRules(sub, base, env, depth+1, true)
+			sh.addRules(sub, base, env, depth+1, true, importLayer)
 		case "media":
 			if EvaluateMediaQuery(StripWS(r.Prelude), env) {
-				sh.addRules(ParseRuleList(r.Content), baseURL, env, depth, false)
+				sh.addRules(ParseRuleList(r.Content), baseURL, env, depth, false, layer)
 			}
 		case "supports":
 			if evaluateSupports(RemoveWSKeepStructure(r.Prelude), ctx) {
-				sh.addRules(ParseRuleList(r.Content), baseURL, env, depth, false)
+				sh.addRules(ParseRuleList(r.Content), baseURL, env, depth, false, layer)
 			}
-		case "layer", "document", "-moz-document", "scope", "container":
-			if r.HasBlock {
-				sh.addRules(ParseRuleList(r.Content), baseURL, env, depth, false)
+		case "layer":
+			var names []string
+			if prelude := StripWS(r.Prelude); len(prelude) > 0 {
+				for _, part := range SplitOnComma(prelude) {
+					name, ok := parseLayerName(part)
+					if !ok {
+						names = nil
+						env.warn("Unsupported @layer name: " + Serialize(r.Prelude))
+						break
+					}
+					names = append(names, joinLayer(layer, name))
+				}
+				if names == nil {
+					continue
+				}
 			}
+			if len(names) > 1 || (!r.HasBlock && len(names) == 1) {
+				if r.HasBlock {
+					env.warn("@layer rule with multiple layer names ignored")
+					continue
+				}
+				for _, n := range names {
+					env.addLayer(n)
+				}
+				continue
+			}
+			if !r.HasBlock {
+				continue
+			}
+			name := ""
+			if len(names) == 1 {
+				name = names[0]
+			} else {
+				name = joinLayer(layer, "@anonymous"+strconv.Itoa(len(*env.layerList())))
+			}
+			env.addLayer(name)
+			sh.addRules(ParseRuleList(r.Content), baseURL, env, depth, false, name)
+		case "scope", "container", "document", "-moz-document":
+			// Not supported by WeasyPrint either: the rules are ignored
+			// (they only apply when their condition holds).
+			env.warn("Unsupported at-rule: @" + r.AtKeyword)
 		case "page":
-			sh.addPageRule(r, ctx, env)
+			sh.addPageRule(r, ctx, env, layer)
 		case "font-face":
 			if ff := parseFontFace(r.Content, baseURL); ff != nil {
 				sh.FontFaces = append(sh.FontFaces, ff)
@@ -325,14 +530,14 @@ var MarginBoxNames = []string{
 	"left-bottom", "left-middle", "left-top",
 }
 
-func (sh *Stylesheet) addPageRule(r Rule, ctx *ParseCtx, env *Env) {
+func (sh *Stylesheet) addPageRule(r Rule, ctx *ParseCtx, env *Env, layer string) {
 	sels, ok := parsePageSelectors(StripWS(r.Prelude))
 	if !ok {
 		env.warn("Unsupported @page selector: " + Serialize(r.Prelude))
 		return
 	}
 	decls, nested := ParseDeclarations(r.Content)
-	pr := &PageRule{Selectors: sels, Decls: preprocessDecls(decls, ctx, env), MarginDecl: map[string][]Decl{}, Order: env.nextOrder(), Origin: sh.Origin}
+	pr := &PageRule{Selectors: sels, Decls: preprocessDecls(decls, ctx, env), MarginDecl: map[string][]Decl{}, Order: env.nextOrder(), Origin: sh.Origin, Layer: layer, layers: env.layerList()}
 	for _, n := range nested {
 		if marginBoxNames[n.AtKeyword] {
 			d, _ := ParseDeclarations(n.Content)

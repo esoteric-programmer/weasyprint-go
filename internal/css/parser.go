@@ -114,10 +114,20 @@ func ParseDeclarations(ts []Token) ([]Declaration, []Rule) {
 			rules = append(rules, r)
 			continue
 		}
-		// Collect until semicolon.
+		// Collect until semicolon. A {} block met first (outside of
+		// custom properties) makes a nested style rule (CSS nesting).
 		start := i
+		custom := t.Type == TIdent && strings.HasPrefix(t.Value, "--")
 		for i < len(ts) && ts[i].Type != TSemicolon {
+			if ts[i].Type == TCurlyBlock && !custom {
+				break
+			}
 			i++
+		}
+		if i < len(ts) && ts[i].Type == TCurlyBlock {
+			rules = append(rules, Rule{Prelude: ts[start:i], Content: ts[i].Children, HasBlock: true})
+			i++
+			continue
 		}
 		part := ts[start:i]
 		if d, ok := parseDeclaration(part); ok {
