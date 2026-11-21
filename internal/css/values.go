@@ -47,6 +47,12 @@ func (l Length) Resolve(base float64) float64 {
 	case "%":
 		return l.V * base / 100
 	case "calc":
+		if l.calc != nil {
+			// min(), max() or clamp() mixing percentages and lengths,
+			// with lengths already computed to px.
+			lin, _ := l.calc.evalBase(func(x Length) float64 { return x.V }, base, true)
+			return lin.px + lin.num
+		}
 		return l.V + l.Pct*base/100
 	}
 	return l.V
@@ -865,15 +871,49 @@ func parseCalcValue(t Token) *calcNode {
 type linear struct {
 	px, pct, num float64
 	isNum        bool
+	// deferred is set when min(), max() or clamp() compare values with
+	// percentages, which can only be resolved with the percentage base.
+	deferred bool
 }
 
 func (n *calcNode) eval(toPx func(Length) float64) (linear, bool) {
+	return n.evalBase(toPx, 0, false)
+}
+
+// withPx returns a copy of the node with lengths converted to px.
+func (n *calcNode) withPx(toPx func(Length) float64) *calcNode {
+	c := *n
+	if n.op == 0 {
+		if n.leaf.Type == TDimension {
+			c.leaf = Token{Type: TDimension, Num: toPx(Length{V: n.leaf.Num, Unit: n.leaf.Value}), Value: "px"}
+		}
+		return &c
+	}
+	if n.left != nil {
+		c.left = n.left.withPx(toPx)
+	}
+	if n.right != nil {
+		c.right = n.right.withPx(toPx)
+	}
+	c.args = nil
+	for _, a := range n.args {
+		c.args = append(c.args, a.withPx(toPx))
+	}
+	return &c
+}
+
+// evalBase evaluates the node; percentages are resolved against base when
+// hasBase is set.
+func (n *calcNode) evalBase(toPx func(Length) float64, base float64, hasBase bool) (linear, bool) {
 	if n.op == 0 {
 		t := n.leaf
 		switch t.Type {
 		case TNumber:
 			return linear{num: t.Num, isNum: true}, true
 		case TPercentage:
+			if hasBase {
+				return linear{px: t.Num * base / 100}, true
+			}
 			return linear{pct: t.Num}, true
 		case TDimension:
 			return linear{px: toPx(Length{V: t.Num, Unit: t.Value})}, true
@@ -883,12 +923,17 @@ func (n *calcNode) eval(toPx func(Length) float64) (linear, bool) {
 	if n.op == 'm' || n.op == 'M' || n.op == 'c' {
 		// Only resolvable without percentages.
 		var vals []linear
+		deferred := false
 		for _, a := range n.args {
-			v, ok := a.eval(toPx)
+			v, ok := a.evalBase(toPx, base, hasBase)
 			if !ok {
 				return linear{}, false
 			}
+			deferred = deferred || v.deferred || v.pct != 0
 			vals = append(vals, v)
+		}
+		if deferred {
+			return linear{deferred: true}, true
 		}
 		pick := vals[0]
 		switch n.op {
@@ -916,26 +961,29 @@ func (n *calcNode) eval(toPx func(Length) float64) (linear, bool) {
 		}
 		return pick, true
 	}
-	l, ok1 := n.left.eval(toPx)
-	r, ok2 := n.right.eval(toPx)
+	l, ok1 := n.left.evalBase(toPx, base, hasBase)
+	r, ok2 := n.right.evalBase(toPx, base, hasBase)
 	if !ok1 || !ok2 {
 		return linear{}, false
 	}
+	if l.deferred || r.deferred {
+		return linear{deferred: true, isNum: l.isNum && r.isNum}, true
+	}
 	switch n.op {
 	case '+':
-		return linear{l.px + r.px, l.pct + r.pct, l.num + r.num, l.isNum && r.isNum}, true
+		return linear{l.px + r.px, l.pct + r.pct, l.num + r.num, l.isNum && r.isNum, false}, true
 	case '-':
-		return linear{l.px - r.px, l.pct - r.pct, l.num - r.num, l.isNum && r.isNum}, true
+		return linear{l.px - r.px, l.pct - r.pct, l.num - r.num, l.isNum && r.isNum, false}, true
 	case '*':
 		if r.isNum {
-			return linear{l.px * r.num, l.pct * r.num, l.num * r.num, l.isNum}, true
+			return linear{l.px * r.num, l.pct * r.num, l.num * r.num, l.isNum, false}, true
 		}
 		if l.isNum {
-			return linear{r.px * l.num, r.pct * l.num, r.num * l.num, r.isNum}, true
+			return linear{r.px * l.num, r.pct * l.num, r.num * l.num, r.isNum, false}, true
 		}
 	case '/':
 		if r.isNum && r.num != 0 {
-			return linear{l.px / r.num, l.pct / r.num, l.num / r.num, l.isNum}, true
+			return linear{l.px / r.num, l.pct / r.num, l.num / r.num, l.isNum, false}, true
 		}
 	}
 	return linear{}, false

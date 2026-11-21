@@ -294,3 +294,35 @@ func TestPageSizes(t *testing.T) {
 		t.Errorf("document size not used: %v", doc.Pages[0].Width)
 	}
 }
+
+func TestColumnSpanAll(t *testing.T) {
+	src := `<style>@page{size:A6;margin:10mm} body{font:12px sans-serif}</style><div style="columns:2"><p>one two three four five six seven eight nine ten eleven twelve</p><h2 style="column-span:all">Spanning</h2><p>alpha beta gamma delta epsilon zeta eta theta iota kappa lambda</p></div>`
+	doc, err := HTMLFromString(src, "").Render(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var span *layout.Box
+	var cols []*layout.Box
+	var walk func(b *layout.Box)
+	walk = func(b *layout.Box) {
+		if b.IsColumn {
+			cols = append(cols, b)
+		}
+		if b.Element != nil && b.Element.Tag == "h2" && span == nil {
+			span = b
+		}
+		for _, ch := range b.Children {
+			walk(ch)
+		}
+	}
+	walk(doc.pages[0].Box)
+	if span == nil || len(cols) < 3 {
+		t.Fatalf("span %v, %d columns", span != nil, len(cols))
+	}
+	if span.W < cols[0].W*1.9 {
+		t.Errorf("spanning heading is %v wide, columns %v", span.W, cols[0].W)
+	}
+	if !(cols[0].Y < span.Y && span.Y < cols[len(cols)-1].Y) {
+		t.Errorf("heading at %v, columns at %v and %v", span.Y, cols[0].Y, cols[len(cols)-1].Y)
+	}
+}

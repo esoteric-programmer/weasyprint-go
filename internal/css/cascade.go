@@ -482,9 +482,15 @@ func (ctx *computeCtx) length(l Length, fontSize float64) Length {
 		if l.calc == nil {
 			return l
 		}
-		lin, ok := l.calc.eval(func(x Length) float64 { return ctx.toPx(x, fontSize) })
+		toPx := func(x Length) float64 { return ctx.toPx(x, fontSize) }
+		lin, ok := l.calc.eval(toPx)
 		if !ok {
 			return Px(0)
+		}
+		if lin.deferred {
+			c := Length{Unit: "calc", calc: l.calc.withPx(toPx)}
+			c.V = c.Resolve(0) // for callers adding up fixed parts
+			return c
 		}
 		if lin.isNum {
 			return Px(lin.num)

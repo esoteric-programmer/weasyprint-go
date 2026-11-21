@@ -53,6 +53,9 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 	}
 	box.Y += collapseMargins(append(append([]float64{}, adjoining...), box.MT)) - box.MT
 	top := box.ContentY()
+	if hasSpanningChild(box) {
+		return c.spanningColumnsLayout(box, bottomSpace, skip, cbi, pageIsEmpty, abs, fixed, n, colW, gap, top)
+	}
 	maxH := math.Inf(1)
 	if !math.IsInf(c.PageBottom, 1) {
 		maxH = c.PageBottom - bottomSpace - box.PB - box.BB - top
@@ -68,8 +71,9 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 		maxH = math.Min(maxH, specH)
 	}
 
+	kids := box.Children
 	column := func(x float64) *Box {
-		col := box.CopyWith(box.Children)
+		col := box.CopyWith(kids)
 		col.Orig = box.Original()
 		col.Style = c.R.AnonymousStyleWith(box.Style, map[css.PropID]css.Value{
 			css.PColumnCount: css.Keyword("auto"), css.PColumnWidth: css.Keyword("auto"),
@@ -214,6 +218,140 @@ func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cb
 		return blockResult{next: nextPage{Break: "any"}}
 	}
 	np := nextPage{Break: "any", set: true}
+	_, np.Page = pageValues(nb)
+	return blockResult{box: nb, resume: resume, next: np}
+}
+
+func hasSpanningChild(box *Box) bool {
+	for _, ch := range box.Children {
+		if isSpanning(ch) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSpanning(b *Box) bool {
+	return b.Style != nil && b.Style.Kw(css.PColumnSpan) == "all" && !b.IsAbsPlaceholder
+}
+
+// spanningColumnsLayout lays out a multi-column container with
+// column-span: all children like WeasyPrint's columns_layout: runs of
+// other children are laid out in balanced columns, spanning children
+// as blocks across the whole container.
+func (c *Context) spanningColumnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cbInfo, pageIsEmpty bool,
+	abs, fixed *absList, n int, colW, gap, top float64) blockResult {
+	type group struct {
+		start int
+		kids  []*Box
+		span  bool
+	}
+	start, sub := 0, Skip(nil)
+	if skip != nil {
+		start, sub = skipFirst(skip)
+	}
+	var groups []group
+	for i := start; i < len(box.Children); i++ {
+		ch := box.Children[i]
+		if isSpanning(ch) {
+			groups = append(groups, group{start: i, kids: []*Box{ch}, span: true})
+			continue
+		}
+		if len(groups) == 0 || groups[len(groups)-1].span {
+			groups = append(groups, group{start: i})
+		}
+		g := &groups[len(groups)-1]
+		g.kids = append(g.kids, ch)
+	}
+	isStart := skip == nil
+	y := top
+	var adjoining []float64
+	var children []*Box
+	var resume Skip
+	next := nextPage{Break: "any"}
+	inner := cbInfo{W: box.W, HAuto: true, Style: box.Style}
+	for gi, g := range groups {
+		gskip := Skip(nil)
+		if gi == 0 && sub != nil {
+			gskip = Skip{0: sub}
+		}
+		if g.span {
+			child := g.kids[0].Copy()
+			child.X, child.Y = box.ContentX(), y
+			res := c.blockLevelLayout(child, bottomSpace, gskip, box, inner, pageIsEmpty, abs, fixed, adjoining, false)
+			if res.box == nil {
+				resume = Skip{g.start: nil}
+				break
+			}
+			children = append(children, res.box)
+			y = res.box.Y + res.box.MT + res.box.BorderHeight()
+			adjoining = append([]float64{}, res.adjoining...)
+			if len(adjoining) == 0 {
+				adjoining = []float64{res.box.MB}
+			}
+			if res.resume != nil {
+				resume = Skip{g.start: res.resume}
+				next = res.next
+				break
+			}
+			pageIsEmpty = false
+			continue
+		}
+		y += collapseMargins(adjoining)
+		adjoining = nil
+		// Lay the run out as a multi-column container of its own.
+		mc := box.CopyWith(g.kids)
+		ov := map[css.PropID]css.Value{}
+		for _, id := range []css.PropID{css.PColumnCount, css.PColumnWidth, css.PColumnGap, css.PColumnFill} {
+			ov[id] = box.Style.Get(id)
+		}
+		mc.Style = c.R.AnonymousStyleWith(box.Style, ov)
+		mc.Anonymous = true
+		mc.X, mc.Y = box.X, y
+		mc.ML, mc.MR, mc.BL, mc.BR, mc.PL, mc.PR = 0, 0, 0, 0, 0, 0
+		mc.X = box.ContentX()
+		mc.W = box.W
+		mc.MT, mc.MB, mc.PT, mc.PB, mc.BT, mc.BB = 0, 0, 0, 0, 0, 0
+		mc.Marker = nil
+		mc.Anchor, mc.BookmarkLevel, mc.StringSets = "", 0, nil
+		res := c.columnsLayout(mc, bottomSpace, gskip, inner, pageIsEmpty, abs, fixed, nil)
+		if res.box == nil {
+			resume = Skip{g.start: nil}
+			if gskip != nil {
+				resume = skip
+			}
+			break
+		}
+		for _, col := range res.box.Children {
+			children = append(children, col)
+		}
+		y += res.box.H
+		pageIsEmpty = false
+		if res.resume != nil {
+			k, v := skipFirst(res.resume)
+			resume = Skip{g.start + k: v}
+			next = res.next
+			break
+		}
+	}
+	if len(children) == 0 && !pageIsEmpty {
+		return blockResult{next: nextPage{Break: "any"}}
+	}
+	nb := box.CopyWith(children)
+	nb.NoStartDecor = !isStart || box.NoStartDecor
+	if resume == nil {
+		y += collapseMargins(adjoining)
+	}
+	nb.H = y - top
+	if specH := specifiedHeight(box, cbi); !math.IsNaN(specH) {
+		nb.H = specH
+	}
+	if resume != nil {
+		nb.NoEndDecor = true
+		nb.MB, nb.PB, nb.BB = 0, 0, 0
+	}
+	np := next
+	np.set = true
 	_, np.Page = pageValues(nb)
 	return blockResult{box: nb, resume: resume, next: np}
 }

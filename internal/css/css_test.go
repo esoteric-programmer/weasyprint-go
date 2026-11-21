@@ -137,3 +137,16 @@ h5 { color: red; & b { color: green } }`)
 		}
 	}
 }
+
+func TestMinMaxClampWithPercentages(t *testing.T) {
+	r, d := resolve(t, `<html><body><h1>a</h1><h2>b</h2><h3>c</h3></body></html>`,
+		`h1 { width: clamp(10px, 30%, 90px) } h2 { width: max(10%, 50px) } h3 { width: calc(min(50%, 300px) - 10px) }`)
+	for _, c := range []struct {
+		tag  string
+		want float64
+	}{{"h1", 90}, {"h2", 50}, {"h3", 190}} {
+		if got := r.Style(d.Find(c.tag)).Px(PWidth, 400); got != c.want {
+			t.Errorf("%s width %v, want %v", c.tag, got, c.want)
+		}
+	}
+}
