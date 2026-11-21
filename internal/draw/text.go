@@ -1,10 +1,12 @@
 package draw
 
 import (
+	"github.com/esoteric-programmer/weasyprint-go/internal/bidi"
 	"math"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/fonts"
+	"github.com/esoteric-programmer/weasyprint-go/internal/images"
 	"github.com/esoteric-programmer/weasyprint-go/internal/layout"
 	"github.com/esoteric-programmer/weasyprint-go/internal/text"
 )
@@ -28,6 +30,13 @@ func (cv *canvas) fontName(f *fonts.Font) (string, *fontEntry) {
 func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float64, x, y float64, color css.Color) float64 {
 	var runs []*glyphRun
 	var cur *glyphRun
+	type colorGlyph struct {
+		im      *images.Image
+		x, size float64
+		font    *fonts.Font
+		id      uint16
+	}
+	var colored []colorGlyph
 	for i, g := range glyphs {
 		if g.Face == nil || (g.ID == 0 && isIgnorable(runes[g.Start])) {
 			if advances != nil {
@@ -45,6 +54,11 @@ func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float
 		want := g.Advance
 		if advances != nil {
 			want = advances[i]
+		}
+		if g.Face.Font.HasColorBitmaps() {
+			if im := cv.r.colorGlyph(g.Face.Font, g.ID); im != nil {
+				colored = append(colored, colorGlyph{im, x, g.Size, g.Face.Font, g.ID})
+			}
 		}
 		_, e := cv.fontName(g.Face.Font)
 		cur.items = append(cur.items, e.code(g.ID, string(runes[g.Start:g.End])))
@@ -78,6 +92,19 @@ func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float
 	}
 	cv.c.EndText()
 	cv.c.Restore()
+	// Color bitmap glyphs are drawn as images, placed as WeasyPrint does:
+	// the height is the advance of the glyph and the top is at the
+	// baseline plus the ascent (in ems) minus the font size.
+	for _, cg := range colored {
+		f := cg.font
+		d := f.Advance(cg.id) / f.UnitsPerEm
+		if d <= 0 || cg.im.Height == 0 {
+			continue
+		}
+		a := float64(cg.im.Width) / float64(cg.im.Height) * d
+		top := y + f.Ascent/f.UnitsPerEm - cg.size
+		cv.paintImage(cg.im, cg.x, top, a*cg.size, d*cg.size)
+	}
 	return x
 }
 
@@ -119,6 +146,7 @@ func (cv *canvas) drawText(b *layout.Box, decos []decoration) {
 			}
 		}
 	}
+	glyphs, advances = visualOrder(b, glyphs, advances)
 	baseline := b.Y + b.Baseline
 	// Text shadows.
 	if shadows, ok := b.Style.Get(css.PTextShadow).([]css.Shadow); ok {
@@ -247,4 +275,64 @@ func (cv *canvas) drawLeader(b *layout.Box) {
 
 func isIgnorable(r rune) bool {
 	return r == '\n' || r == '\r' || r == 0xad || (r >= 0x200b && r <= 0x200f) || r == 0x2060 || r == 0xfeff
+}
+
+// visualOrder reorders the glyphs of a text box for display with the
+// Unicode bidirectional algorithm, the base direction being the direction
+// of the box (as Pango does for each WeasyPrint text box), and mirrors
+// glyphs on right-to-left levels.
+func visualOrder(b *layout.Box, glyphs []text.Glyph, advances []float64) ([]text.Glyph, []float64) {
+	if len(glyphs) == 0 {
+		return glyphs, advances
+	}
+	runes := b.Shaped.Runes[b.Start:b.End]
+	base := 0
+	if b.Style.Kw(css.PDirection) == "rtl" {
+		base = 1
+	}
+	if base == 0 && !bidi.HasRTL(runes) {
+		return glyphs, advances
+	}
+	levels := bidi.Levels(runes, base)
+	gl := make([]uint8, len(glyphs))
+	for i, g := range glyphs {
+		if k := g.Start - b.Start; k >= 0 && k < len(levels) {
+			gl[i] = levels[k]
+		}
+	}
+	order := bidi.Reorder(gl)
+	og := make([]text.Glyph, len(glyphs))
+	oa := make([]float64, len(glyphs))
+	for v, l := range order {
+		g := glyphs[l]
+		if gl[l]%2 == 1 && g.Face != nil && g.End-g.Start == 1 {
+			if m, ok := bidi.Mirror(b.Shaped.Runes[g.Start]); ok {
+				if id := g.Face.Font.GlyphIndex(m); id != 0 {
+					g.ID = id
+				}
+			}
+		}
+		og[v] = g
+		oa[v] = advances[l]
+	}
+	return og, oa
+}
+
+type colorGlyphKey struct {
+	font *fonts.Font
+	id   uint16
+}
+
+// colorGlyph returns the decoded color bitmap of a glyph, or nil.
+func (r *Renderer) colorGlyph(f *fonts.Font, id uint16) *images.Image {
+	k := colorGlyphKey{f, id}
+	if im, ok := r.colorGlyphs[k]; ok {
+		return im
+	}
+	var im *images.Image
+	if data := f.GlyphPNG(id); data != nil {
+		im, _ = images.Decode(data, "image/png", "")
+	}
+	r.colorGlyphs[k] = im
+	return im
 }

@@ -48,3 +48,43 @@ func TestShape(t *testing.T) {
 	}
 	t.Logf("subset size %d (orig %d)", len(data), len(sh.Glyphs[0].Face.Font.Data))
 }
+
+func TestBreaksAroundObjects(t *testing.T) {
+	// Atomic inlines (U+FFFC) are break opportunities, except after an
+	// opening bracket or before a closing one.
+	b := Breaks([]rune("a￼￼b(￼)"), BreakOptions{})
+	if b[1] != BreakAllowed || b[2] != BreakAllowed || b[3] != BreakAllowed {
+		t.Errorf("expected breaks around objects: %v", b)
+	}
+	if b[5] == BreakAllowed || b[6] == BreakAllowed {
+		t.Errorf("unexpected breaks inside brackets: %v", b)
+	}
+}
+
+func TestArabicForms(t *testing.T) {
+	// بيت: initial beh, medial yeh, final teh; ا isolated.
+	got := arabicForms([]rune("بيت ا"))
+	want := []uint8{formInit, formMedi, formFina, formNone, formIsol}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("forms %v, want %v", got, want)
+		}
+	}
+	lib := fonts.NewLibrary()
+	s := NewShaper(lib)
+	spec := Spec{Families: []string{"DejaVu Sans"}, Weight: 400, Size: 16}
+	sh := s.Shape("بيت", spec)
+	iso := s.Shape("ب", spec)
+	if len(sh.Glyphs) == 0 || sh.Glyphs[0].Face == nil || sh.Glyphs[0].Face.Font.GlyphIndex('ب') == 0 {
+		t.Skip("no Arabic font")
+	}
+	if sh.Glyphs[0].ID == iso.Glyphs[0].ID {
+		t.Error("initial form not substituted")
+	}
+}
+
+func TestPangoUnits(t *testing.T) {
+	if got := pangoUnits(1.0 / 3); got != 341.0/1024 {
+		t.Errorf("pangoUnits(1/3) = %v", got)
+	}
+}

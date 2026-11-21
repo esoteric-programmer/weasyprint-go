@@ -3,6 +3,8 @@
 package text
 
 import (
+	"github.com/esoteric-programmer/weasyprint-go/internal/bidi"
+	"math"
 	"strings"
 	"sync"
 	"unicode"
@@ -20,8 +22,11 @@ type Spec struct {
 	LetterSpacing float64
 	WordSpacing   float64
 	SmallCaps     bool
+	AllSmallCaps  bool
 	NoKerning     bool
 	NoLigatures   bool
+	RTL           bool   // base direction of the text
+	Lang          string // language of the text
 }
 
 func (s Spec) key() string {
@@ -29,6 +34,10 @@ func (s Spec) key() string {
 	b.WriteString(strings.Join(s.Families, ","))
 	b.WriteByte('|')
 	b.WriteString(itoa(s.Weight))
+	if s.RTL {
+		b.WriteString("r")
+	}
+	b.WriteString(s.Lang)
 	if s.Italic {
 		b.WriteString("i")
 	}
@@ -74,14 +83,68 @@ func (s *Shaped) Width(start, end int) float64 {
 
 // Shaper shapes text using a font library.
 type Shaper struct {
-	Lib   *fonts.Library
-	mu    sync.Mutex
-	faces map[string][]*fonts.Face
+	Lib         *fonts.Library
+	mu          sync.Mutex
+	faces       map[string][]*fonts.Face
+	strong      map[string][]bool
+	scriptFaces map[string][]*fonts.Face
+	fallbacks   map[string]*fonts.Face
 }
 
 // NewShaper returns a shaper.
 func NewShaper(lib *fonts.Library) *Shaper {
-	return &Shaper{Lib: lib, faces: map[string][]*fonts.Face{}}
+	return &Shaper{Lib: lib, faces: map[string][]*fonts.Face{}, strong: map[string][]bool{},
+		scriptFaces: map[string][]*fonts.Face{}, fallbacks: map[string]*fonts.Face{}}
+}
+
+// fallback finds a face for a rune that the faces of a spec do not cover:
+// emoji fonts for emoji, then the families of the spec in fontconfig order,
+// then any font covering the rune.
+func (s *Shaper) fallback(spec Spec, r rune, req fonts.Request) *fonts.Face {
+	key := spec.key() + "|" + string(r)
+	s.mu.Lock()
+	if f, ok := s.fallbacks[key]; ok {
+		s.mu.Unlock()
+		return f
+	}
+	s.mu.Unlock()
+	var face *fonts.Face
+	if isEmojiPresentation(r) {
+		if fams, ok := s.Lib.OrderedFamilies([]string{"emoji"}); ok {
+			face = s.Lib.FallbackInFamilies(fams, r, req)
+		}
+	}
+	if face == nil {
+		if fams, ok := s.Lib.OrderedFamilies(spec.Families); ok {
+			face = s.Lib.FallbackInFamilies(fams, r, req)
+		}
+	}
+	if face == nil {
+		face = s.Lib.Fallback(r, req)
+	}
+	s.mu.Lock()
+	s.fallbacks[key] = face
+	s.mu.Unlock()
+	return face
+}
+
+// isEmojiPresentation reports whether a rune is displayed as an emoji by
+// default (Emoji_Presentation).
+func isEmojiPresentation(r rune) bool {
+	switch {
+	case r >= 0x1f300 && r <= 0x1f64f, r >= 0x1f680 && r <= 0x1f6ff, r >= 0x1f900 && r <= 0x1faff,
+		r >= 0x1f1e6 && r <= 0x1f1ff, r == 0x1f004, r == 0x1f0cf, r == 0x1f18e, r >= 0x1f191 && r <= 0x1f19a,
+		r >= 0x1f201 && r <= 0x1f251:
+		return true
+	}
+	switch r {
+	case 0x231a, 0x231b, 0x23e9, 0x23ea, 0x23eb, 0x23ec, 0x23f0, 0x23f3, 0x25fd, 0x25fe, 0x2614, 0x2615,
+		0x267f, 0x2693, 0x26a1, 0x26aa, 0x26ab, 0x26bd, 0x26be, 0x26c4, 0x26c5, 0x26ce, 0x26d4, 0x26ea,
+		0x26f2, 0x26f3, 0x26f5, 0x26fa, 0x26fd, 0x2705, 0x270a, 0x270b, 0x2728, 0x274c, 0x274e, 0x2753,
+		0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf, 0x2b1b, 0x2b1c, 0x2b50, 0x2b55:
+		return true
+	}
+	return r >= 0x2648 && r <= 0x2653
 }
 
 // Faces returns the faces for a spec, one per available family.
@@ -95,14 +158,16 @@ func (s *Shaper) Faces(spec Spec) []*fonts.Face {
 	s.mu.Unlock()
 	req := fonts.Request{Weight: spec.Weight, Italic: spec.Italic, Stretch: spec.Stretch}
 	var out []*fonts.Face
+	var strong []bool
 	seen := map[*fonts.Font]bool{}
-	if ordered, ok := s.Lib.OrderedFamilies(spec.Families); ok {
+	if ordered, ok := s.Lib.OrderedFamilyValues(spec.Families); ok {
 		// Families in fontconfig order, as Pango selects them.
 		for _, fam := range ordered {
-			if f := s.Lib.ResolveExact(fam, req); f != nil && !seen[f.Font] {
+			if f := s.Lib.ResolveExact(fam.Name, req); f != nil && !seen[f.Font] {
 				seen[f.Font] = true
 				out = append(out, f)
-				if len(out) >= 8 {
+				strong = append(strong, fam.Strong)
+				if len(out) >= 12 {
 					break
 				}
 			}
@@ -120,8 +185,33 @@ func (s *Shaper) Faces(spec Spec) []*fonts.Face {
 			out = append(out, f)
 		}
 	}
+	for len(strong) < len(out) {
+		strong = append(strong, true)
+	}
 	s.mu.Lock()
 	s.faces[key] = out
+	s.strong[key] = strong
+	s.mu.Unlock()
+	return out
+}
+
+// facesForScript returns the faces of a spec sorted for a script run.
+func (s *Shaper) facesForScript(spec Spec, sc int) []*fonts.Face {
+	faces := s.Faces(spec)
+	key := spec.key() + "|" + itoa(sc)
+	s.mu.Lock()
+	if f, ok := s.scriptFaces[key]; ok {
+		s.mu.Unlock()
+		return f
+	}
+	strong := s.strong[spec.key()]
+	s.mu.Unlock()
+	out := faces
+	if len(strong) == len(faces) {
+		out = sortForScript(faces, strong, sc)
+	}
+	s.mu.Lock()
+	s.scriptFaces[key] = out
 	s.mu.Unlock()
 	return out
 }
@@ -138,7 +228,9 @@ type Metrics struct {
 
 // PrimaryMetrics returns the metrics of the first available face.
 func (s *Shaper) PrimaryMetrics(spec Spec) Metrics {
-	faces := s.Faces(spec)
+	// Like WeasyPrint's strut (the layout of a space): the first face for
+	// the script of the language.
+	faces := s.facesForScript(spec, langScript(spec.Lang))
 	if len(faces) == 0 {
 		return Metrics{Ascent: spec.Size * 0.8, Descent: spec.Size * 0.2, XHeight: spec.Size * 0.5, CapHeight: spec.Size * 0.7,
 			UnderlinePos: spec.Size * 0.1, UnderlineThick: spec.Size / 16, StrikeoutPos: spec.Size * 0.3, StrikeoutThick: spec.Size / 16}
@@ -183,6 +275,32 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 	}
 	faces := s.Faces(spec)
 	req := fonts.Request{Weight: spec.Weight, Italic: spec.Italic, Stretch: spec.Stretch}
+	// Bidi levels: like Pango items, runs of one level choose their fonts
+	// separately.
+	var levels []uint8
+	if spec.RTL || bidi.HasRTL(runes) {
+		base := 0
+		if spec.RTL {
+			base = 1
+		}
+		levels = bidi.Levels(runes, base)
+	}
+	sameRun := func(i int) bool { return levels == nil || levels[i] == levels[i-1] }
+	// Scripts are resolved within each bidi level run (Pango items).
+	var runScript []int
+	if levels == nil {
+		runScript = runScripts(runes, spec.Lang)
+	} else {
+		runScript = make([]int, 0, len(runes))
+		for a := 0; a < len(runes); {
+			b := a + 1
+			for b < len(runes) && levels[b] == levels[a] {
+				b++
+			}
+			runScript = append(runScript, runScripts(runes[a:b], spec.Lang)...)
+			a = b
+		}
+	}
 	// Choose a face for each rune.
 	runeFace := make([]*fonts.Face, len(runes))
 	for i, r := range runes {
@@ -193,8 +311,11 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 			} else if len(faces) > 0 {
 				face = faces[0]
 			}
+		} else if i > 0 && runeFace[i-1] != nil && isNonGraphic(r) && sameRun(i) && runeFace[i-1].Font.HasRune(r) {
+			// Like Pango, spaces keep the font of the preceding text.
+			face = runeFace[i-1]
 		} else {
-			for _, f := range faces {
+			for _, f := range s.facesForScript(spec, runScript[i]) {
 				if f.Font.HasRune(r) && (f.Info == nil || f.Info.Covers(r)) {
 					face = f
 					break
@@ -205,7 +326,7 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 				face = runeFace[i-1]
 			}
 			if face == nil {
-				face = s.Lib.Fallback(r, req)
+				face = s.fallback(spec, r, req)
 			}
 			if face == nil && len(faces) > 0 {
 				face = faces[0]
@@ -213,17 +334,44 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 		}
 		runeFace[i] = face
 	}
+	// Arabic contextual forms.
+	var forms []uint8
+	if hasArabic(runes) {
+		forms = arabicForms(runes)
+	}
+	formGlyph := func(i int) uint16 {
+		f := runeFace[i]
+		if f == nil {
+			return 0
+		}
+		g := f.Font.GlyphIndex(runes[i])
+		if forms != nil {
+			g = arabicGlyph(f.Font, runes[i], forms[i], g)
+		}
+		return g
+	}
 	x := 0.0
 	for i := 0; i < len(runes); {
 		r := runes[i]
 		face := runeFace[i]
 		size := spec.Size
 		cr := r
-		if spec.SmallCaps && unicode.IsLower(r) {
-			up := unicode.ToUpper(r)
-			if face != nil && face.Font.HasRune(up) {
-				cr = up
-				size = spec.Size * 0.7
+		// Small caps: the font's smcp (and c2sc) glyphs, or uppercase
+		// letters at 0.8 times the size, as Pango emulates them.
+		var smcp, c2sc map[uint16]uint16
+		if spec.SmallCaps && face != nil {
+			smcp = face.Font.SingleSubstitutions("smcp")
+			if spec.AllSmallCaps {
+				c2sc = face.Font.SingleSubstitutions("c2sc")
+			}
+			if len(smcp) == 0 {
+				smcp = nil
+				if unicode.IsLower(r) || (spec.AllSmallCaps && unicode.IsUpper(r)) {
+					if up := unicode.ToUpper(r); face.Font.HasRune(up) {
+						cr = up
+						size = spec.Size * 0.8
+					}
+				}
 			}
 		}
 		g := Glyph{Face: face, Size: size, Start: i, End: i + 1}
@@ -236,9 +384,48 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 			if r == 0xa0 && g.ID == 0 {
 				g.ID = face.Font.GlyphIndex(' ')
 			}
-			g.Advance = face.Font.Advance(g.ID) * size / face.Font.UnitsPerEm
+			if smcp != nil {
+				if s, ok := c2sc[g.ID]; ok {
+					g.ID = s
+				} else if s, ok := smcp[g.ID]; ok {
+					g.ID = s
+				}
+			}
+			arabicLig := false
+			if forms != nil && forms[i] != formNone {
+				g.ID = arabicGlyph(face.Font, r, forms[i], g.ID)
+				// Required ligatures (lam-alef).
+				sub := face.Font.Arabic()
+				for _, lig := range sub.Ligatures[g.ID] {
+					n := len(lig.Components)
+					if i+1+n > len(runes) {
+						continue
+					}
+					ok := true
+					for k, comp := range lig.Components {
+						if runeFace[i+1+k] != face || formGlyph(i+1+k) != comp {
+							ok = false
+							break
+						}
+					}
+					if ok {
+						g.ID = lig.Glyph
+						g.End = i + 1 + n
+						arabicLig = true
+						break
+					}
+				}
+				if !arabicLig && len(sub.Ligatures) == 0 && r == 0x644 && i+1 < len(runes) && runeFace[i+1] == face {
+					if lg := lamAlef(face.Font, forms[i], runes[i+1]); lg != 0 {
+						g.ID = lg
+						g.End = i + 2
+						arabicLig = true
+					}
+				}
+			}
+			g.Advance = pangoUnits(face.Font.Advance(g.ID) * size / face.Font.UnitsPerEm)
 			// Ligatures.
-			if !spec.NoLigatures && spec.LetterSpacing == 0 && !spec.SmallCaps {
+			if !arabicLig && !spec.NoLigatures && spec.LetterSpacing == 0 && !spec.SmallCaps {
 				if ligs := face.Font.Ligatures(g.ID); len(ligs) > 0 {
 					for _, lig := range ligs {
 						n := len(lig.Components)
@@ -256,7 +443,7 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 						if ok {
 							g.ID = lig.Glyph
 							g.End = i + 1 + n
-							g.Advance = face.Font.Advance(g.ID) * size / face.Font.UnitsPerEm
+							g.Advance = pangoUnits(face.Font.Advance(g.ID) * size / face.Font.UnitsPerEm)
 							break
 						}
 					}
@@ -265,18 +452,23 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 		} else {
 			g.Advance = 0
 		}
-		if r != '\n' && !isDefaultIgnorable(r) {
-			g.Advance += spec.LetterSpacing
-		}
+		// Spacing as Pango attributes (integer Pango units, truncated).
+		ls := math.Trunc(spec.LetterSpacing*1024) / 1024
 		if r == ' ' || r == 0xa0 || r == '\t' {
-			g.Advance += spec.WordSpacing
+			if spec.WordSpacing != 0 {
+				g.Advance += math.Trunc(spec.WordSpacing*1024+ls*1024) / 1024
+			} else {
+				g.Advance += ls
+			}
+		} else if r != '\n' && !isDefaultIgnorable(r) {
+			g.Advance += ls
 		}
 		// Kerning with the previous glyph.
 		if !spec.NoKerning && len(sh.Glyphs) > 0 {
 			prev := &sh.Glyphs[len(sh.Glyphs)-1]
 			if prev.Face == face && face != nil && prev.Size == size && prev.ID != 0 && g.ID != 0 {
 				if k := face.Font.Kern(prev.ID, g.ID); k != 0 {
-					adj := k * size / face.Font.UnitsPerEm
+					adj := pangoUnits(k * size / face.Font.UnitsPerEm)
 					prev.Advance += adj
 					x += adj
 					sh.Pos[i] = x
@@ -309,4 +501,17 @@ func (s *Shaped) GlyphsInRange(start, end int) []Glyph {
 		}
 	}
 	return out
+}
+
+// isNonGraphic reports whether a rune is not "graphic" in GLib's sense
+// (spaces, separators and controls), for which Pango keeps the current
+// font.
+func isNonGraphic(r rune) bool {
+	return unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp, unicode.Cc, unicode.Cf)
+}
+
+// pangoUnits rounds a length to Pango units (1/1024 px), as glyph
+// positions from HarfBuzz are in Pango.
+func pangoUnits(v float64) float64 {
+	return math.Round(v*1024) / 1024
 }

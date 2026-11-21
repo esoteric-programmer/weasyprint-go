@@ -38,3 +38,28 @@ func TestParse(t *testing.T) {
 		}
 	}
 }
+
+func TestQuirksTableInParagraph(t *testing.T) {
+	find := func(doc *Node) *Node {
+		var walk func(n *Node) *Node
+		walk = func(n *Node) *Node {
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == ElementNode && c.Tag == "table" {
+					return c
+				}
+				if r := walk(c); r != nil {
+					return r
+				}
+			}
+			return nil
+		}
+		return walk(doc)
+	}
+	// Without a DOCTYPE (quirks mode), tables do not close paragraphs.
+	if tbl := find(Parse("<p>a<table><tr><td>x</table>")); tbl == nil || tbl.Parent == nil || tbl.Parent.Tag != "p" {
+		t.Error("quirks mode: table should be inside the paragraph")
+	}
+	if tbl := find(Parse("<!DOCTYPE html><p>a<table><tr><td>x</table>")); tbl == nil || tbl.Parent == nil || tbl.Parent.Tag != "body" {
+		t.Error("standards mode: table should close the paragraph")
+	}
+}

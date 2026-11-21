@@ -57,23 +57,24 @@ type pendingLink struct {
 
 // Renderer writes pages into a PDF document.
 type Renderer struct {
-	doc        *pdf.Document
-	fm         *fontManager
-	shaper     *text.Shaper
-	imgRefs    map[*images.Image]pdf.Ref
-	pageRefs   []pdf.Ref
-	anchors    map[string]anchorPos
-	links      []pendingLink
-	marks      []bookmark
-	opts       Options
-	nobj       int
-	images     *images.Cache
-	propagated map[*layout.Box]bool
+	doc         *pdf.Document
+	fm          *fontManager
+	shaper      *text.Shaper
+	imgRefs     map[*images.Image]pdf.Ref
+	colorGlyphs map[colorGlyphKey]*images.Image
+	pageRefs    []pdf.Ref
+	anchors     map[string]anchorPos
+	links       []pendingLink
+	marks       []bookmark
+	opts        Options
+	nobj        int
+	images      *images.Cache
+	propagated  map[*layout.Box]bool
 }
 
 // Write renders pages to w as a PDF file.
 func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.Cache, opts Options) error {
-	r := &Renderer{doc: pdf.NewDocument(), shaper: shaper, imgRefs: map[*images.Image]pdf.Ref{},
+	r := &Renderer{doc: pdf.NewDocument(), shaper: shaper, imgRefs: map[*images.Image]pdf.Ref{}, colorGlyphs: map[colorGlyphKey]*images.Image{},
 		anchors: map[string]anchorPos{}, opts: opts, images: imgs, propagated: map[*layout.Box]bool{}}
 	r.fm = newFontManager(r.doc)
 	pagesRef := r.doc.Reserve()

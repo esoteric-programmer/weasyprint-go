@@ -90,14 +90,16 @@ linear/radial/repeating gradients, `attr()`, counters and
 **Layout**
 * Block layout with margin collapsing, `box-sizing`, min/max sizes,
   `overflow` clipping.
-* Inline layout: line breaking (UAX #14 style), `white-space`,
+* Inline layout: line breaking (UAX #14 style), bidirectional text
+  (UAX #9, `direction`, `dir`), Arabic shaping (joining forms, lam-alef),
+  `white-space`,
   `text-align` including `justify`, `text-indent`, `letter-spacing`,
   `word-spacing`, `text-transform`, soft hyphens, automatic hyphenation
   (`hyphens: auto` with the `lang` attribute, `hyphenate-character`,
   `hyphenate-limit-chars`, `hyphenate-limit-zone`; dictionaries for about
   50 languages are built in), `overflow-wrap`,
   `word-break`, `tab-size`, all `vertical-align` values, inline blocks,
-  kerning and standard ligatures.
+  kerning, standard ligatures, small caps (`smcp`/`c2sc` or emulated).
 * Floats and `clear`; relative, absolute and fixed positioning
   (fixed boxes repeat on every page); `z-index` stacking.
 * Lists with inside and outside markers.
@@ -133,16 +135,24 @@ named destinations, bookmarks (`bookmark-level`, `bookmark-label`,
 `object-fit`/`object-position` and `image-resolution`.
 
 **Fonts**: system fonts are discovered in the usual directories of Linux,
-macOS and Windows (plus `WEASYPRINT_FONT_PATH`), matched with the CSS
-font matching algorithm, with per-character fallback, metric-compatible
-substitutes (Arial → Liberation Sans…) and synthetic bold/italic.
+macOS and Windows (plus `WEASYPRINT_FONT_PATH`) and matched with the CSS
+font matching algorithm. Like Pango, family lists are expanded with the
+system's fontconfig rules (aliases, generic families, metric-compatible
+substitutes, `<dir>` font directories), and per-character fallback
+follows the same order, by script and language; elsewhere a built-in
+table is used. Color emoji fonts (CBDT/PNG, like Noto Color Emoji) are
+drawn as images. As in WeasyPrint, bold and italic are not synthesized.
 `@font-face` supports TTF, OTF, TTC and WOFF sources and `local()`.
 
 ## Differences from WeasyPrint and limitations
 
-* No complex text shaping: Arabic contextual forms, Indic scripts and
-  bidirectional reordering are not implemented (Pango/HarfBuzz do this in
-  WeasyPrint). Latin, Greek, Cyrillic and CJK text work well.
+* Only Arabic gets complex shaping; Indic and other scripts needing
+  HarfBuzz's script shapers (reordering, mark positioning) are shown
+  with their default glyphs. Latin, Greek, Cyrillic, CJK, Hebrew and
+  Arabic work well.
+* OpenType layout covers kerning, standard and required ligatures,
+  Arabic joining forms and small caps, not other features (e.g.
+  contextual alternates).
 * Nonstandard hyphenation patterns that change letters (such as the
   old German "ck" → "k-k") are not used.
 * WOFF2 web fonts are skipped (they require Brotli); variable fonts use
@@ -150,11 +160,34 @@ substitutes (Arial → Liberation Sans…) and synthetic bold/italic.
 * Not implemented yet: `::first-line` and
   `::first-letter`, PDF forms, attachments, PDF/A and PDF/UA variants,
   bleed and crop marks.
-* A few WeasyPrint quirks are intentionally not reproduced, e.g. the
-  near-black colors of `groove`/`ridge`/`inset`/`outset` borders, files
-  without a charset being decoded as Windows-1252 even when they are
-  valid UTF-8, and a rounding error in WeasyPrint's footnote area that
-  often moves footnotes that fit to the next page.
+
+The output was compared with WeasyPrint 70 page by page. The remaining
+differences come from WeasyPrint bugs that are intentionally not
+reproduced:
+
+* Glyph widths are written rounded and the correction is truncated, so
+  glyphs drift from their laid-out positions (up to 0.5/1000 em each).
+* Tab stops are 2.4% too wide (`tab-size: 100px` gives 102.4px).
+* `groove`/`ridge`/`inset`/`outset` colors are nearly black (RGB values
+  between 0 and 1 are written as percentages).
+* Footnotes that fit are often moved to the next page (a floating-point
+  comparison without tolerance in the footnote area).
+* Leaving a named page for the unnamed one does not break the page (the
+  empty page name is taken as "no change").
+* Margins of multi-column containers do not collapse with their
+  siblings, unlike other block formatting contexts.
+* Column balancing overshoots the minimal height, and columns on later
+  pages keep top margins at column breaks.
+* Overlapping text with many floats, row-spanning cells keeping padding
+  from rows moved to the next page, short flex items moved to the last
+  page of a fragmented flex line, footnotes called from absolutely
+  positioned boxes being lost.
+* Outside list markers are placed at the top of the item instead of on
+  the baseline of its first line, and flex items are painted in reverse
+  order in some cases.
+* Files without a charset are decoded as Windows-1252 even when they are
+  valid UTF-8, and inline SVG text does not inherit fonts from the
+  document.
 
 ## Architecture
 
@@ -167,6 +200,7 @@ substitutes (Arial → Liberation Sans…) and synthetic bold/italic.
 | `internal/fonts` | OpenType parsing, system font library and matching, TrueType/CFF subsetting | fontconfig, fontTools |
 | `internal/text` | Shaping (cmap, kerning, ligatures, fallback) and line break opportunities | Pango, HarfBuzz |
 | `internal/hyphen` | Hyphenation patterns (Liang's algorithm) | Pyphen |
+| `internal/bidi` | Unicode bidirectional algorithm and Arabic joining data | FriBidi |
 | `internal/layout` | Box generation and anonymous boxes, block/inline/float/table/flex/grid/column/absolute/page layout | `formatting_structure/`, `layout/` |
 | `internal/draw` | Painting order, backgrounds, borders, text, images, SVG, links and bookmarks | `draw/`, `svg/`, `pdf/` |
 | `internal/pdf` | Low-level PDF objects and content streams | pydyf |

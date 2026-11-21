@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf16"
 )
 
@@ -46,12 +47,16 @@ type Font struct {
 	Embeddable                   bool
 	Variable                     bool
 
-	advances  []uint16
-	cmap      map[rune]uint16
-	kern      map[uint32]int16
-	gposKern  *pairKerning
-	ligatures map[uint16][]Ligature
-	locaLong  bool
+	advances   []uint16
+	cmap       map[rune]uint16
+	kern       map[uint32]int16
+	gposKern   *pairKerning
+	ligatures  map[uint16][]Ligature
+	arabic     *ArabicSubst
+	arabicOnce sync.Once
+	substs     map[string]map[uint16]uint16
+	substMu    sync.Mutex
+	locaLong   bool
 }
 
 type Ligature struct {
@@ -643,6 +648,10 @@ func xAdvance(b []byte, off int, format uint16) int16 {
 
 // lookupIndices returns the lookups for a feature tag in DFLT/latn scripts.
 func lookupIndices(t []byte, feature string) []int {
+	return lookupIndicesFor(t, feature, map[string]bool{"DFLT": true, "latn": true, "cyrl": true, "grek": true})
+}
+
+func lookupIndicesFor(t []byte, feature string, scripts map[string]bool) []int {
 	scriptList := int(u16(t, 4))
 	featureList := int(u16(t, 6))
 	var featIdx []int
@@ -651,7 +660,7 @@ func lookupIndices(t []byte, feature string) []int {
 	for i := 0; i < nScripts; i++ {
 		r := scriptList + 2 + 6*i
 		tag := string(t[r : r+4])
-		if tag != "DFLT" && tag != "latn" && tag != "cyrl" && tag != "grek" {
+		if !scripts[tag] {
 			continue
 		}
 		so := scriptList + int(u16(t, r+4))
@@ -709,16 +718,16 @@ func lookupSubtables(t []byte, li int, extType uint16) (uint16, []int) {
 		return 0, nil
 	}
 	lo := lookupList + int(u16(t, lookupList+2+2*li))
-	typ := u16(t, lo)
+	lookupType := u16(t, lo)
+	typ := lookupType
 	ns := int(u16(t, lo+4))
 	var subs []int
 	for i := 0; i < ns; i++ {
 		so := lo + int(u16(t, lo+6+2*i))
-		if typ == extType {
-			// Extension subtable.
-			realType := u16(t, so+2)
+		if lookupType == extType {
+			// Extension subtable (every subtable has its own header).
+			typ = u16(t, so+2)
 			so += int(u32(t, so+4))
-			typ = realType
 		}
 		subs = append(subs, so)
 	}
@@ -788,6 +797,127 @@ func parseGPOSKern(t []byte) (pk *pairKerning) {
 		return nil
 	}
 	return pk
+}
+
+// ArabicSubst holds the GSUB substitutions used to shape Arabic text.
+type ArabicSubst struct {
+	// Forms are the single substitutions of the isol, fina, init and medi
+	// features.
+	Forms [4]map[uint16]uint16
+	// Ligatures are the required and standard ligatures (rlig, liga).
+	Ligatures map[uint16][]Ligature
+}
+
+// Arabic returns the Arabic shaping substitutions of the font.
+func (f *Font) Arabic() *ArabicSubst {
+	f.arabicOnce.Do(func() {
+		a := &ArabicSubst{Ligatures: map[uint16][]Ligature{}}
+		for i := range a.Forms {
+			a.Forms[i] = map[uint16]uint16{}
+		}
+		t := f.tables["GSUB"]
+		if len(t) >= 10 {
+			func() {
+				defer func() { recover() }()
+				scripts := map[string]bool{"arab": true}
+				for fi, feat := range []string{"isol", "fina", "init", "medi"} {
+					for _, li := range lookupIndicesFor(t, feat, scripts) {
+						singleSubst(t, li, a.Forms[fi])
+					}
+				}
+				for _, feat := range []string{"rlig", "liga"} {
+					for _, li := range lookupIndicesFor(t, feat, scripts) {
+						ligatureSubst(t, li, a.Ligatures)
+					}
+				}
+			}()
+		}
+		f.arabic = a
+	})
+	return f.arabic
+}
+
+func singleSubst(t []byte, li int, out map[uint16]uint16) {
+	typ, subs := lookupSubtables(t, li, 7)
+	if typ != 1 {
+		return
+	}
+	for _, so := range subs {
+		format := u16(t, so)
+		cov := parseCoverage(t, so+int(u16(t, so+2)))
+		switch format {
+		case 1:
+			delta := u16(t, so+4)
+			for g := range cov {
+				if _, ok := out[g]; !ok {
+					out[g] = g + delta
+				}
+			}
+		case 2:
+			n := int(u16(t, so+4))
+			for g, i := range cov {
+				if i < n {
+					if _, ok := out[g]; !ok {
+						out[g] = u16(t, so+6+2*i)
+					}
+				}
+			}
+		}
+	}
+}
+
+func ligatureSubst(t []byte, li int, out map[uint16][]Ligature) {
+	typ, subs := lookupSubtables(t, li, 7)
+	if typ != 4 {
+		return
+	}
+	for _, so := range subs {
+		cov := parseCoverage(t, so+int(u16(t, so+2)))
+		n := int(u16(t, so+4))
+		inv := map[int]uint16{}
+		for g, i := range cov {
+			inv[i] = g
+		}
+		for i := 0; i < n; i++ {
+			first := inv[i]
+			ls := so + int(u16(t, so+6+2*i))
+			cnt := int(u16(t, ls))
+			for j := 0; j < cnt; j++ {
+				lo := ls + int(u16(t, ls+2+2*j))
+				lig := u16(t, lo)
+				cc := int(u16(t, lo+2))
+				comps := make([]uint16, cc-1)
+				for k := range comps {
+					comps[k] = u16(t, lo+4+2*k)
+				}
+				out[first] = append(out[first], Ligature{comps, lig})
+			}
+		}
+	}
+}
+
+// SingleSubstitutions returns the single substitutions of a GSUB feature
+// (such as smcp or c2sc) for Latin and default scripts.
+func (f *Font) SingleSubstitutions(feature string) map[uint16]uint16 {
+	f.substMu.Lock()
+	defer f.substMu.Unlock()
+	if m, ok := f.substs[feature]; ok {
+		return m
+	}
+	m := map[uint16]uint16{}
+	if t := f.tables["GSUB"]; len(t) >= 10 {
+		func() {
+			defer func() { recover() }()
+			for _, li := range lookupIndices(t, feature) {
+				singleSubst(t, li, m)
+			}
+		}()
+	}
+	if f.substs == nil {
+		f.substs = map[string]map[uint16]uint16{}
+	}
+	f.substs[feature] = m
+	return m
 }
 
 // Ligatures returns standard ligatures (GSUB liga) starting with a glyph.

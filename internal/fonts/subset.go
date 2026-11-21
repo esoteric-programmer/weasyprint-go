@@ -162,6 +162,9 @@ func (f *Font) Subset(glyphs map[uint16]bool) []byte {
 	}
 	glyf := f.tables["glyf"]
 	if glyf == nil || f.tables["loca"] == nil {
+		if f.tables["CBDT"] != nil || f.tables["sbix"] != nil {
+			return f.emptyOutlines()
+		}
 		return f.Standalone()
 	}
 	keep := map[uint16]bool{0: true}
@@ -363,4 +366,33 @@ func parseDict(d []byte) map[int][]float64 {
 		}
 	}
 	return out
+}
+
+// emptyOutlines returns a TrueType font with the metrics of a bitmap-only
+// font (such as color emoji fonts) and empty outlines: the bitmaps are
+// drawn as images.
+func (f *Font) emptyOutlines() []byte {
+	n := f.NumGlyphs
+	tables := map[string][]byte{
+		"glyf": {0, 0, 0, 0},
+		"loca": make([]byte, 4*(n+1)),
+	}
+	for _, t := range []string{"head", "hhea", "hmtx", "OS/2", "name"} {
+		if d, ok := f.tables[t]; ok {
+			tables[t] = d
+		}
+	}
+	head := append([]byte(nil), tables["head"]...)
+	if len(head) >= 52 {
+		binary.BigEndian.PutUint16(head[50:], 1)
+	}
+	tables["head"] = head
+	maxp := make([]byte, 32)
+	binary.BigEndian.PutUint32(maxp[0:], 0x00010000)
+	binary.BigEndian.PutUint16(maxp[4:], uint16(n))
+	tables["maxp"] = maxp
+	post := make([]byte, 32)
+	binary.BigEndian.PutUint32(post[0:], 0x00030000)
+	tables["post"] = post
+	return buildSFNT([]byte{0, 1, 0, 0}, tables)
 }

@@ -492,6 +492,76 @@ func (l *Library) OrderedFamilies(families []string) (out []string, ok bool) {
 	return out, true
 }
 
+// FallbackInFamilies returns a face of the first family of an ordered
+// list covering r (fontconfig font sorting, as used by Pango to find
+// fallback fonts), or nil.
+func (l *Library) FallbackInFamilies(families []string, r rune, req Request) *Face {
+	l.mu.Lock()
+	l.scan()
+	var found []*FaceInfo
+	for _, fam := range families {
+		name := strings.ToLower(fam)
+		faces, ok := l.user[name]
+		if !ok {
+			faces = l.byFamily[name]
+			if len(faces) == 0 {
+				faces = l.byNorm[normFamily(fam)]
+			}
+		}
+		for _, fi := range faces {
+			if l.covers(fi, r) {
+				found = faces
+				break
+			}
+		}
+		if found != nil {
+			break
+		}
+	}
+	l.mu.Unlock()
+	if found == nil {
+		return nil
+	}
+	// Match the style among the faces covering the rune.
+	l.mu.Lock()
+	var covering []*FaceInfo
+	for _, c := range found {
+		if l.covers(c, r) {
+			covering = append(covering, c)
+		}
+	}
+	fi := Select(covering, req)
+	f := l.Load(fi)
+	l.mu.Unlock()
+	if f == nil || !f.HasRune(r) {
+		return nil
+	}
+	return l.resolveFaces([]*FaceInfo{fi}, req)
+}
+
+// OrderedFamilyValues is like OrderedFamilies but tells which families
+// are strongly bound (named in the CSS family list).
+func (l *Library) OrderedFamilyValues(families []string) ([]FamilyValue, bool) {
+	fc := l.fontConfig()
+	if fc == nil {
+		return nil, false
+	}
+	var out []FamilyValue
+	seen := map[string]bool{}
+	for _, strong := range []bool{true, false} {
+		for _, f := range fc.Expand(families) {
+			if f.Strong != strong {
+				continue
+			}
+			if k := normFamily(f.Name); !seen[k] {
+				seen[k] = true
+				out = append(out, f)
+			}
+		}
+	}
+	return out, true
+}
+
 // ResolveExact returns the selected face of an installed or user-defined
 // family, without generic family or alias substitution.
 func (l *Library) ResolveExact(family string, req Request) *Face {
@@ -684,15 +754,8 @@ func (l *Library) resolveFaces(faces []*FaceInfo, req Request) *Face {
 		return nil
 	}
 	face := &Face{Font: f, Info: fi}
-	if req.Weight >= 600 && fi.Weight < 600 && !fi.Variable {
-		face.SynthBold = true
-	}
-	if req.Weight >= 600 && fi.Weight < 600 && fi.Variable {
-		face.SynthBold = true
-	}
-	if req.Italic && !fi.Italic {
-		face.SynthItalic = true
-	}
+	// Like WeasyPrint, which writes the real glyphs of fonts to PDF, bold
+	// and italic are not synthesized.
 	return face
 }
 
@@ -753,12 +816,6 @@ func (l *Library) faceFor(fi *FaceInfo, req Request, r rune) *Face {
 		return nil
 	}
 	face := &Face{Font: f, Info: fi}
-	if req.Weight >= 600 && fi.Weight < 600 {
-		face.SynthBold = true
-	}
-	if req.Italic && !fi.Italic {
-		face.SynthItalic = true
-	}
 	return face
 }
 

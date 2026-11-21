@@ -17,6 +17,10 @@ func SpecFor(s *css.Style) text.Spec {
 		Weight:   int(s.Num(css.PFontWeight)),
 		Italic:   s.Kw(css.PFontStyle) != "normal",
 		Size:     s.FontSize(),
+		RTL:      s.Kw(css.PDirection) == "rtl",
+	}
+	if l, ok := s.Get(css.PLang).(css.Str); ok {
+		spec.Lang = string(l)
 	}
 	if st := s.Kw(css.PFontStretch); st != "" {
 		spec.Stretch = stretchNum(st)
@@ -29,6 +33,7 @@ func SpecFor(s *css.Style) text.Spec {
 	}
 	caps := s.Kw(css.PFontVariantCaps)
 	spec.SmallCaps = caps == "small-caps" || caps == "all-small-caps"
+	spec.AllSmallCaps = caps == "all-small-caps"
 	spec.NoKerning = s.Kw(css.PFontKerning) == "none"
 	if feats, ok := s.Get(css.PFontFeatureSettings).([]css.FontFeature); ok {
 		for _, f := range feats {
@@ -980,6 +985,24 @@ func positionInlineFrom(b *Box, x, origin float64) float64 {
 		default:
 			ch.Translate(x-ch.X, 0)
 			x += ch.MarginWidth()
+		}
+	}
+	// Right-to-left boxes show their children in reverse order
+	// (WeasyPrint's split_inline_box); text is reordered when drawn.
+	if b.Style != nil && b.Style.Kw(css.PDirection) == "rtl" {
+		var inflow []*Box
+		for _, ch := range b.Children {
+			if !ch.IsFloated() && !ch.IsAbsPlaceholder && !ch.IsAbsolutelyPositioned() {
+				inflow = append(inflow, ch)
+			}
+		}
+		if len(inflow) > 1 {
+			px := inflow[0].X
+			for k := len(inflow) - 1; k >= 0; k-- {
+				ch := inflow[k]
+				ch.Translate(px-ch.X, 0)
+				px += ch.MarginWidth()
+			}
 		}
 	}
 	return x - start
