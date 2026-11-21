@@ -199,7 +199,11 @@ PDF/A, PDF/UA and PDF/X variants, tagged PDF, form fields, attachments
 (`<link rel=attachment>`, `<a rel=attachment>`, `--attachment`), output
 intents (`srgb` or `@color-profile`), compressed object streams.
 
-**Images**: PNG, JPEG, GIF and SVG (shapes, paths, text, gradients,
+**Images**: PNG, JPEG, GIF, BMP (including RLE and bit fields), TIFF
+(uncompressed, PackBits, LZW, Deflate, JPEG, CCITT Group 3/4 fax; strips
+or tiles; 1 to 16 bits; palette, gray, RGB, CMYK, alpha), WebP (lossy,
+lossless, alpha, first frame of animations; decoded exactly like
+libwebp) and SVG (shapes, paths, text, gradients,
 `use`/`symbol`, nested `svg`, clip paths, transforms, `<style>`,
 `<image>`, `tspan` with `x`/`y`/`dx`/`dy` lists and per-chunk
 `text-anchor`), with
@@ -234,8 +238,8 @@ here:
   `image-orientation`, `margin-break`, `place-self`,
   `font-language-override`, `subgrid`, `lab()`/`lch()`/`oklab()`/
   `oklch()`/`color()`/`light-dark()` colors.
-* Images: BMP, TIFF, WebP and the other formats of Pillow; SVG markers,
-  masks, patterns and filters.
+* Images: the rarer formats of Pillow (ICO, PPM, PCX, TGA, JPEG 2000…);
+  SVG markers, masks, patterns and filters.
 * Paged media: `bleed` and crop/cross `marks`.
 * PDF: the `debug` variant (link annotations on every id), colors in
   CMYK and other color spaces (`device-cmyk()`, `color()` with
@@ -303,7 +307,7 @@ reproduced:
 | `internal/layout` | Box generation and anonymous boxes, block/inline/float/table/flex/grid/column/absolute/page layout | `formatting_structure/`, `layout/` |
 | `internal/draw` | Painting order, backgrounds, borders, text, images, SVG, links and bookmarks | `draw/`, `svg/`, `pdf/` |
 | `internal/pdf` | Low-level PDF objects and content streams | pydyf |
-| `internal/images` | Image decoding and SVG parsing | `images.py`, Pillow |
+| `internal/images` | Image decoding (BMP, TIFF, WebP decoders; VP8/VP8L from golang.org/x/image) and SVG parsing | `images.py`, Pillow |
 | `internal/fetch` | URL resolution and fetching (`file:`, `data:`, `http(s):`) | `urls.py` |
 
 ## Development
@@ -322,4 +326,8 @@ stylesheets in `internal/css/ua` come from WeasyPrint (see
 WeasyPrint's implementation. The hyphenation dictionaries in
 `internal/hyphen/dictionaries` come from Pyphen (LibreOffice/Hunspell
 patterns) and keep their own licenses, given in the README files next to
-them (mostly LGPL/MPL/GPL tri-licenses).
+them (mostly LGPL/MPL/GPL tri-licenses). The VP8 and VP8L decoders in
+`internal/images/vp8` and `internal/images/vp8l` come from
+golang.org/x/image (BSD 3-Clause, The Go Authors), and the sRGB profile
+in `internal/draw` is the International Color Consortium's
+`sRGB2014.icc`, freely redistributable.

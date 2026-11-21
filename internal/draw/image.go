@@ -131,6 +131,9 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 			"Width": width, "Height": height, "BitsPerComponent": 8,
 			"ColorSpace": pdf.Name("DeviceGray"),
 		}
+		if interpolate {
+			md["Interpolate"] = true
+		}
 		data := encode(md, alpha, 1)
 		d["SMask"] = r.doc.Add(&pdf.Stream{Dict: md, Data: data, Compress: true})
 	}
