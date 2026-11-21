@@ -575,6 +575,10 @@ func (ctx *computeCtx) computeLengths(v Value) Value {
 				l := ctx.length(*s.Pos, fs)
 				s.Pos = &l
 			}
+			if s.Hint != nil {
+				l := ctx.length(*s.Hint, fs)
+				s.Hint = &l
+			}
 			g.Stops[i] = s
 		}
 		g.SizeLen = [2]Length{ctx.length(v.SizeLen[0], fs), ctx.length(v.SizeLen[1], fs)}

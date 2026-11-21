@@ -326,3 +326,15 @@ func TestColumnSpanAll(t *testing.T) {
 		t.Errorf("heading at %v, columns at %v and %v", span.Y, cols[0].Y, cols[len(cols)-1].Y)
 	}
 }
+
+func TestTextOverflowEllipsis(t *testing.T) {
+	src := `<p style="width:100px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Lorem ipsum dolor sit amet</p>`
+	_, pdf := render(t, src, &Options{Uncompressed: true})
+	if !bytes.Contains(pdf, []byte("<2026>")) {
+		t.Errorf("no ellipsis in the text")
+	}
+	_, pdf = render(t, strings.Replace(src, "overflow:hidden;", "", 1), &Options{Uncompressed: true})
+	if bytes.Contains(pdf, []byte("<2026>")) {
+		t.Errorf("ellipsis drawn for visible overflow")
+	}
+}

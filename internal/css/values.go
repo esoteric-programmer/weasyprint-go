@@ -126,6 +126,8 @@ type Gradient struct {
 type ColorStop struct {
 	Color Value // Color or Keyword("currentcolor")
 	Pos   *Length
+	// Hint is the color hint between the previous stop and this one.
+	Hint *Length
 }
 
 // Shadow is a box-shadow / text-shadow item.
@@ -508,14 +510,19 @@ func parseImage(t Token, ctx *ParseCtx) (Value, bool) {
 
 func parseColorStops(groups [][]Token) ([]ColorStop, bool) {
 	var stops []ColorStop
+	var hint *Length
 	for _, g := range groups {
 		g = RemoveWS(g)
 		if len(g) == 0 {
 			return nil, false
 		}
-		// Color hint (a lone length) is approximated by being ignored.
+		// Color hint: a lone length between two color stops.
 		if len(g) == 1 {
-			if _, ok := parseLengthToken(g[0], true, true); ok {
+			if l, ok := parseLengthToken(g[0], true, true); ok {
+				if len(stops) == 0 || hint != nil {
+					return nil, false
+				}
+				hint = &l
 				continue
 			}
 		}
@@ -529,7 +536,8 @@ func parseColorStops(groups [][]Token) ([]ColorStop, bool) {
 			return nil, false
 		}
 		if len(rest) == 0 {
-			stops = append(stops, ColorStop{Color: c})
+			stops = append(stops, ColorStop{Color: c, Hint: hint})
+			hint = nil
 			continue
 		}
 		for _, r := range rest {
@@ -538,10 +546,11 @@ func parseColorStops(groups [][]Token) ([]ColorStop, bool) {
 				return nil, false
 			}
 			ll := l
-			stops = append(stops, ColorStop{Color: c, Pos: &ll})
+			stops = append(stops, ColorStop{Color: c, Pos: &ll, Hint: hint})
+			hint = nil
 		}
 	}
-	return stops, len(stops) >= 1
+	return stops, len(stops) >= 1 && hint == nil
 }
 
 func parseLinearGradient(args []Token) (*Gradient, bool) {

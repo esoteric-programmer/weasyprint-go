@@ -146,6 +146,10 @@ func (cv *canvas) drawText(b *layout.Box, decos []decoration) {
 			}
 		}
 	}
+	runes := sh.Runes
+	if cv.ellipsisRight != 0 && b.X+total > cv.ellipsisRight+1e-6 && !b.Spec.RTL {
+		glyphs, advances, runes = cv.ellipsize(b, glyphs, advances, cv.ellipsisRight-b.X)
+	}
 	glyphs, advances = visualOrder(b, glyphs, advances)
 	baseline := b.Y + b.Baseline
 	// Text shadows.
@@ -156,12 +160,12 @@ func (cv *canvas) drawText(b *layout.Box, decos []decoration) {
 			if !ok {
 				col = color
 			}
-			cv.drawGlyphs(sh.Runes, glyphs, advances, b.X+s.X.V, baseline+s.Y.V, col)
+			cv.drawGlyphs(runes, glyphs, advances, b.X+s.X.V, baseline+s.Y.V, col)
 		}
 	}
 	// Underlines and overlines are drawn below the text, line-through above.
 	cv.drawDecorations(b, decos, baseline, false)
-	x := cv.drawGlyphs(sh.Runes, glyphs, advances, b.X, baseline, color)
+	x := cv.drawGlyphs(runes, glyphs, advances, b.X, baseline, color)
 	if hsh != nil {
 		cv.drawGlyphs(hsh.Runes, hsh.Glyphs, nil, x, baseline, color)
 	}
@@ -199,49 +203,49 @@ func (cv *canvas) drawDecorations(b *layout.Box, decos []decoration, baseline fl
 				thick = m.StrikeoutThick
 			}
 		}
-		cv.drawDecorationLine(b.X, b.X+b.W, y, thick, d.style, d.color)
+		cv.drawDecorationLine(b.X, b.X+b.W, y, thick, d.style, d.color, b.X-cv.lineX)
 	}
 }
 
-func (cv *canvas) drawDecorationLine(x0, x1, y, thick float64, style string, color css.Color) {
+// drawDecorationLine draws a text decoration like WeasyPrint's draw_line;
+// offset is the distance from the start of the line box, so that patterns
+// continue between boxes.
+func (cv *canvas) drawDecorationLine(x0, x1, y, thick float64, style string, color css.Color, offset float64) {
 	if x1 <= x0 {
 		return
 	}
 	c := cv.c
 	c.Save()
 	cv.setStroke(color)
-	c.SetLineWidth(thick)
 	switch style {
-	case "double":
-		c.MoveTo(x0, y-thick)
-		c.LineTo(x1, y-thick)
-		c.MoveTo(x0, y+thick)
-		c.LineTo(x1, y+thick)
-		c.SetLineWidth(thick * 0.75)
+	case "dashed":
+		c.SetDash([]float64{5 * thick}, offset)
 	case "dotted":
 		c.SetLineCap(1)
-		c.SetDash([]float64{0, 2 * thick}, 0)
-		c.MoveTo(x0+thick/2, y)
-		c.LineTo(x1, y)
-	case "dashed":
-		c.SetDash([]float64{3 * thick, 2 * thick}, 0)
-		c.MoveTo(x0, y)
-		c.LineTo(x1, y)
+		c.SetDash([]float64{0, 2 * thick}, offset)
+	}
+	switch style {
+	case "double":
+		c.SetLineWidth(thick / 3)
+		c.MoveTo(x0, y-thick/3)
+		c.LineTo(x1, y-thick/3)
+		c.MoveTo(x0, y+thick/3)
+		c.LineTo(x1, y+thick/3)
 	case "wavy":
-		amp := thick * 1.5
-		step := thick * 3
-		c.MoveTo(x0, y)
-		up := true
-		for x := x0; x < x1; x += step {
-			nx := math.Min(x+step, x1)
-			dy := amp
-			if up {
-				dy = -amp
-			}
-			c.CurveTo(x+step/3, y+dy, nx-step/3, y+dy, nx, y)
-			up = !up
+		r := 0.75 * thick
+		c.Rect(x0, y-2*r, x1-x0, 4*r)
+		c.Clip()
+		c.SetLineWidth(thick)
+		x := x0 - offset
+		c.MoveTo(x, y)
+		up := 1.0
+		for x < x1 {
+			c.CurveTo(x+r/2, y+up*r, x+3*r/2, y+up*r, x+2*r, y)
+			x += 2 * r
+			up = -up
 		}
 	default:
+		c.SetLineWidth(thick)
 		c.MoveTo(x0, y)
 		c.LineTo(x1, y)
 	}
@@ -335,4 +339,31 @@ func (r *Renderer) colorGlyph(f *fonts.Font, id uint16) *images.Image {
 	}
 	r.colorGlyphs[k] = im
 	return im
+}
+
+// ellipsize cuts the end of the text so that it and a "…" fit in width, like
+// Pango's end ellipsization used by WeasyPrint for text-overflow: ellipsis.
+func (cv *canvas) ellipsize(b *layout.Box, glyphs []text.Glyph, advances []float64, width float64) ([]text.Glyph, []float64, []rune) {
+	ell := cv.r.shaper.Shape("\u2026", b.Spec)
+	ew := ell.Pos[len(ell.Runes)]
+	used := 0.0
+	n := 0
+	for n < len(glyphs) && used+advances[n]+ew <= width+1e-6 {
+		used += advances[n]
+		n++
+	}
+	// Keep whole clusters.
+	for n > 0 && n < len(glyphs) && glyphs[n].Start == glyphs[n-1].Start {
+		n--
+	}
+	out := append([]text.Glyph{}, glyphs[:n]...)
+	outAdv := append([]float64{}, advances[:n]...)
+	end := b.End
+	runes := append(append([]rune{}, b.Shaped.Runes[:end]...), '\u2026')
+	for _, g := range ell.Glyphs {
+		g.Start, g.End = end, end+1
+		out = append(out, g)
+		outAdv = append(outAdv, g.Advance)
+	}
+	return out, outAdv, runes
 }

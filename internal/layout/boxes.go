@@ -121,6 +121,9 @@ type Box struct {
 	// LeaderAnchor is the distance from the end of a leader box to the
 	// point its pattern is aligned on.
 	LeaderAnchor float64
+	// EllipsisRight is the end of the available width of a line box whose
+	// overflowing text ends with an ellipsis (text-overflow: ellipsis), or 0.
+	EllipsisRight float64
 	// Footnote and float bookkeeping.
 	IsFloatPlaceholder bool
 	// Footnote called by a ::footnote-call box.

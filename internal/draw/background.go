@@ -438,19 +438,27 @@ func (cv *canvas) drawGradient(g *css.Gradient, rc rect) {
 		defer cv.c.Restore()
 	}
 	positions, colors := resolveStops(g.Stops, length)
+	hints := stopHints(g.Stops, positions, length)
 	if g.Repeating && len(positions) > 1 {
 		first, last := positions[0], positions[len(positions)-1]
 		period := last - first
 		if period > 0 {
-			var np []float64
+			var np, nh []float64
 			var nc []css.Color
 			for k := math.Floor(-first / period); first+k*period < length && len(np) < 2000; k++ {
 				for i := range positions {
+					if len(np) > 0 {
+						if i == 0 {
+							nh = append(nh, 1)
+						} else {
+							nh = append(nh, hints[i-1])
+						}
+					}
 					np = append(np, positions[i]+k*period)
 					nc = append(nc, colors[i])
 				}
 			}
-			positions, colors = np, nc
+			positions, colors, hints = np, nc, nh
 		}
 	}
 	// Normalize to [0, 1] over the gradient line.
@@ -475,40 +483,111 @@ func (cv *canvas) drawGradient(g *css.Gradient, rc rect) {
 		}
 		coords = []float64{0, 0, t0, 0, 0, t1}
 	}
-	var fns pdf.Array
-	var bounds, encode []float64
+	// Like WeasyPrint: fully transparent stops take the color of their
+	// neighbors, and opacity is drawn with a soft mask.
+	type couple struct {
+		c0, c1 []float64
+		n      float64
+	}
+	n := len(colors)
+	colorCouples := make([]couple, n-1)
+	alphaCouples := make([]couple, n-1)
 	alpha := false
-	for i := 0; i+1 < len(positions); i++ {
+	for i := 0; i+1 < n; i++ {
 		c0, c1 := colors[i], colors[i+1]
-		if c0.A < 1 || c1.A < 1 {
+		colorCouples[i] = couple{[]float64{c0.R, c0.G, c0.B}, []float64{c1.R, c1.G, c1.B}, hints[i]}
+		alphaCouples[i] = couple{[]float64{c0.A}, []float64{c1.A}, hints[i]}
+	}
+	for i, c := range colors {
+		if c.A != 1 {
 			alpha = true
 		}
-		fns = append(fns, pdf.Dict{"FunctionType": 2, "Domain": []float64{0, 1}, "C0": []float64{c0.R, c0.G, c0.B}, "C1": []float64{c1.R, c1.G, c1.B}, "N": 1})
-		if i > 0 {
-			bounds = append(bounds, (positions[i]-t0)/(t1-t0))
+		if c.A == 0 {
+			if i > 0 {
+				colorCouples[i-1].c1 = colorCouples[i-1].c0
+			}
+			if i < n-1 {
+				colorCouples[i].c0 = colorCouples[i].c1
+			}
 		}
+	}
+	for i, ac := range alphaCouples {
+		a0, a1 := ac.c0[0], ac.c1[0]
+		if a0 != 0 && a1 != 0 && !(a0 == 1 && a1 == 1) {
+			colorCouples[i].n = a0 / a1
+		}
+	}
+	var bounds, encode []float64
+	for i := 1; i+1 < n; i++ {
+		bounds = append(bounds, (positions[i]-t0)/(t1-t0))
+	}
+	for i := 0; i+1 < n; i++ {
 		encode = append(encode, 0, 1)
 	}
-	var fn any
-	if len(fns) == 1 {
-		fn = fns[0]
-	} else {
-		fn = pdf.Dict{"FunctionType": 3, "Domain": []float64{0, 1}, "Functions": fns, "Bounds": bounds, "Encode": encode}
+	function := func(cs []couple) any {
+		var fns pdf.Array
+		for _, c := range cs {
+			fns = append(fns, pdf.Dict{"FunctionType": 2, "Domain": []float64{0, 1}, "C0": c.c0, "C1": c.c1, "N": c.n})
+		}
+		if len(fns) == 1 {
+			return fns[0]
+		}
+		return pdf.Dict{"FunctionType": 3, "Domain": []float64{0, 1}, "Functions": fns, "Bounds": bounds, "Encode": encode}
 	}
-	sh := pdf.Dict{"ShadingType": shType, "ColorSpace": pdf.Name("DeviceRGB"), "Coords": coords, "Function": fn, "Extend": pdf.Array{true, true}}
+	extend := !g.Repeating
+	sh := pdf.Dict{"ShadingType": shType, "ColorSpace": pdf.Name("DeviceRGB"), "Coords": coords, "Function": function(colorCouples), "Extend": pdf.Array{extend, extend}}
 	name := fmt.Sprintf("Sh%d", cv.r.nextID())
 	cv.shadings[name] = cv.r.doc.Add(sh)
 	if alpha {
-		// Approximate alpha by the average stop opacity.
-		sum := 0.0
-		for _, c := range colors {
-			sum += c.A
-		}
+		mask := pdf.Dict{"ShadingType": shType, "ColorSpace": pdf.Name("DeviceGray"), "Coords": coords, "Function": function(alphaCouples), "Extend": pdf.Array{extend, extend}}
 		cv.c.Save()
-		cv.c.SetState(cv.alphaState(sum/float64(len(colors)), 1))
+		cv.c.SetState(cv.softMask(mask))
 		defer cv.c.Restore()
 	}
 	cv.c.ShFill(name)
+}
+
+// softMask returns the name of a graphics state whose luminosity soft mask
+// paints the given gray shading, in the current coordinates.
+func (cv *canvas) softMask(shading pdf.Dict) string {
+	content := pdf.NewContent(cv.r.opts.Compress)
+	content.ShFill("Sh0")
+	content.Dict = pdf.Dict{
+		"Type": pdf.Name("XObject"), "Subtype": pdf.Name("Form"),
+		"BBox":      []float64{-1e5, -1e5, 1e5, 1e5},
+		"Group":     pdf.Dict{"Type": pdf.Name("Group"), "S": pdf.Name("Transparency"), "CS": pdf.Name("DeviceGray")},
+		"Resources": pdf.Dict{"Shading": pdf.Dict{"Sh0": cv.r.doc.Add(shading)}},
+	}
+	group := cv.r.doc.Add(content)
+	state := pdf.Dict{"Type": pdf.Name("ExtGState"), "SMask": pdf.Dict{"Type": pdf.Name("Mask"), "S": pdf.Name("Luminosity"), "G": group}, "ca": 1, "AIS": false}
+	name := fmt.Sprintf("SM%d", cv.r.nextID())
+	cv.states[name] = cv.r.doc.Add(state)
+	return name
+}
+
+// stopHints returns the interpolation exponent of each segment between
+// two stops, from the color hints (1 for linear interpolation), computed
+// like WeasyPrint's process_color_stops.
+func stopHints(stops []css.ColorStop, positions []float64, length float64) []float64 {
+	hints := make([]float64, len(positions)-1)
+	for i := range hints {
+		hints[i] = 1
+		if i+1 >= len(stops) || stops[i+1].Hint == nil || length <= 0 {
+			continue
+		}
+		h := stops[i+1].Hint.Resolve(length) / length
+		before, after := positions[i]/length, positions[i+1]/length
+		switch {
+		case h <= 0:
+			hints[i] = 0
+		case h >= 1:
+			hints[i] = 1 << 32
+		case before == after || h >= after || h <= before:
+		default:
+			hints[i] = math.Min(1<<32, math.Log(0.5)/math.Log((h-before)/(after-before)))
+		}
+	}
+	return hints
 }
 
 // resolveStops computes stop positions (CSS Images 3 §3.4.3).

@@ -319,6 +319,9 @@ func (it *lineIterator) next() (*Box, Skip, bool) {
 			continue
 		}
 		line = it.buildLine(start, end, x0, textIndent, avail, y, forced, placedFloats)
+		if st := it.src.Style; st.Kw(css.POverflow) != "visible" && st.Kw(css.PTextOverflow) == "ellipsis" {
+			line.EllipsisRight = x0 + avail
+		}
 		// Lines taller than the strut may collide with floats lower down.
 		if len(it.c.excluded) > 0 && line.H > strutH+1e-6 {
 			probe.H = line.H
@@ -659,7 +662,8 @@ func (it *lineIterator) buildLine(start, end linePos, x0, textIndent, avail, y f
 	stack := []frame{{line, -1}}
 	for _, idx := range chain {
 		ib := items[idx].box.CopyWith(nil)
-		ib.NoStartDecor = true
+		// Continued boxes have no start edge, unless they clone it.
+		ib.NoStartDecor = !clonesDecoration(ib)
 		ib.Anchor = ""
 		ib.BookmarkLevel = 0
 		ib.StringSets = nil
@@ -727,7 +731,7 @@ func (it *lineIterator) buildLine(start, end linePos, x0, textIndent, avail, y f
 	// Inline boxes still open continue on the next line.
 	for i := 1; i < len(stack); i++ {
 		if stack[i].idx >= 0 {
-			stack[i].box.NoEndDecor = true
+			stack[i].box.NoEndDecor = !clonesDecoration(stack[i].box)
 		}
 	}
 	// Soft hyphen at the end of the line.
@@ -1402,4 +1406,10 @@ func TabWidths(b *Box) []float64 {
 		}
 	}
 	return out
+}
+
+// clonesDecoration reports whether the fragments of b keep all their
+// borders, padding and margins (box-decoration-break: clone).
+func clonesDecoration(b *Box) bool {
+	return b.Style != nil && b.Style.Kw(css.PBoxDecorationBreak) == "clone"
 }

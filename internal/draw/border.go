@@ -274,71 +274,124 @@ func (cv *canvas) drawOutline(b *layout.Box) {
 	cv.drawBorderSides(outer, [4][2]float64{}, sides)
 }
 
+// roundedBox is a rectangle with corner radii (top-left, top-right,
+// bottom-right, bottom-left).
+type roundedBox struct {
+	rc rect
+	r  [4][2]float64
+}
+
+// spreadBox moves and grows a rounded box like WeasyPrint's _spread_box.
+func spreadBox(box roundedBox, spread, tx, ty float64) roundedBox {
+	if spread == 0 && tx == 0 && ty == 0 {
+		return box
+	}
+	out := roundedBox{rc: rect{box.rc.x + tx - spread, box.rc.y + ty - spread,
+		math.Max(0, box.rc.w+2*spread), math.Max(0, box.rc.h+2*spread)}}
+	for i, r := range box.r {
+		if r[0] >= -spread && r[1] >= -spread && r[0] != 0 && r[1] != 0 {
+			out.r[i] = [2]float64{r[0] + spread, r[1] + spread}
+		}
+	}
+	return out
+}
+
+// drawBoxShadows draws box shadows like WeasyPrint: blur is drawn with
+// gradients on the sides and corners of the shadow.
 func (cv *canvas) drawBoxShadows(b *layout.Box, inset bool) {
 	shadows, ok := b.Style.Get(css.PBoxShadow).([]css.Shadow)
 	if !ok {
 		return
 	}
-	br := borderRect(b)
-	radii := outerRadii(b)
+	box := roundedBox{borderRect(b), outerRadii(b)}
 	for i := len(shadows) - 1; i >= 0; i-- {
 		sh := shadows[i]
 		if sh.Inset != inset {
 			continue
 		}
 		col, ok := sh.Color.(css.Color)
-		if !ok || col.IsTransparent() {
-			continue
+		if !ok {
+			col = b.Style.Color(css.PColor)
 		}
-		dx, dy, blur, spread := sh.X.V, sh.Y.V, sh.Blur.V, sh.Spread.V
+		spread := sh.Spread.V
+		if inset {
+			spread = -spread
+		}
 		cv.c.Save()
-		if !inset {
-			// Clip out the border box.
-			cv.c.Rect(-1e5, -1e5, 2e5, 2e5)
-			pathRounded(cv.c, br, radii)
-			cv.c.ClipEvenOdd()
-			steps := 1
-			if blur > 0 {
-				steps = 6
-			}
-			for k := 0; k < steps; k++ {
-				grow := spread
-				a := col.A
-				if steps > 1 {
-					t := (float64(k) + 0.5) / float64(steps)
-					grow = spread + blur*(t-0.5)
-					a = col.A / float64(steps) * 1.6
-					if a > col.A {
-						a = col.A
-					}
-				}
-				rc := rect{br.x + dx - grow, br.y + dy - grow, br.w + 2*grow, br.h + 2*grow}
-				if rc.w <= 0 || rc.h <= 0 {
-					continue
-				}
-				r := radii
-				for j := range r {
-					r[j][0] = math.Max(0, r[j][0]+grow)
-					r[j][1] = math.Max(0, r[j][1]+grow)
-				}
-				cv.setFill(css.Color{R: col.R, G: col.G, B: col.B, A: a})
-				pathRounded(cv.c, rc, r)
-				cv.c.Fill()
-			}
-		} else {
-			pr := paddingRect(b)
-			pathRounded(cv.c, pr, innerRadii(b, radii))
-			cv.c.Clip()
-			inner := rect{pr.x + dx + spread, pr.y + dy + spread, pr.w - 2*spread, pr.h - 2*spread}
-			cv.setFill(col)
-			cv.c.Rect(pr.x-1e4, pr.y-1e4, pr.w+2e4, pr.h+2e4)
-			if inner.w > 0 && inner.h > 0 {
-				cv.c.Rect(inner.x, inner.y, inner.w, inner.h)
-			}
-			cv.c.FillEvenOdd()
-		}
+		cv.drawBoxShadow(box, sh.X.V, sh.Y.V, sh.Blur.V, spread, col, inset)
 		cv.c.Restore()
 	}
+}
+
+func (cv *canvas) drawBoxShadow(box roundedBox, tx, ty, blur, spread float64, col css.Color, inset bool) {
+	c := cv.c
+	cv.setFill(col)
+	shadow := spreadBox(box, spread, tx, ty)
+	inner := spreadBox(box, spread-blur, tx, ty)
+	outer := spreadBox(box, spread+blur, tx, ty)
+	path := func(rb roundedBox) { pathRounded(c, rb.rc, rb.r) }
+	// Mask the original box.
+	if !inset {
+		path(outer)
+	}
+	path(box)
+	c.ClipEvenOdd()
+	if blur == 0 {
+		if inset {
+			path(box)
+		}
+		path(shadow)
+		c.FillEvenOdd()
+		return
+	}
+	if inset {
+		path(box)
+		path(outer)
+		c.FillEvenOdd()
+	} else {
+		path(inner)
+		c.Fill()
+	}
+	transparent := col
+	transparent.A = 0
+	in, out := css.Value(col), css.Value(transparent)
+	if inset {
+		in, out = out, in
+	}
+	x, y, w, h := inner.rc.x, inner.rc.y, inner.rc.w, inner.rc.h
+	tl, tr, br, bl := inner.r[0], inner.r[1], inner.r[2], inner.r[3]
+	px := func(v float64) *css.Length { l := css.Px(v); return &l }
+	// Sides.
+	sides := []struct{ angle, x, y, w, h float64 }{
+		{0, x + tl[0], y - 2*blur, w - tl[0] - tr[0], 2 * blur},
+		{math.Pi / 2, x + w, y + tr[1], 2 * blur, h - tr[1] - br[1]},
+		{math.Pi, x + bl[0], y + h, w - bl[0] - br[0], 2 * blur},
+		{3 * math.Pi / 2, x - 2*blur, y + tl[1], 2 * blur, h - tl[1] - bl[1]},
+	}
+	for _, sd := range sides {
+		g := &css.Gradient{Angle: sd.angle, Stops: []css.ColorStop{{Color: in}, {Color: out, Hint: px(blur * 1.25)}}}
+		cv.drawGradient(g, rect{sd.x, sd.y, sd.w, sd.h})
+	}
+	// Corners.
+	c.Save()
+	path(inner)
+	path(outer)
+	c.ClipEvenOdd()
+	corners := []struct{ left, top, x, y, cx, cy float64 }{
+		{100, 100, x - 2*blur, y - 2*blur, tl[0], tl[1]},
+		{0, 100, x + w - tr[0], y - 2*blur, tr[0], tr[1]},
+		{0, 0, x + w - br[0], y + h - br[1], br[0], br[1]},
+		{100, 0, x - 2*blur, y + h - bl[1], bl[0], bl[1]},
+	}
+	for _, cr := range corners {
+		cw, ch := 2*blur+cr.cx, 2*blur+cr.cy
+		g := &css.Gradient{Radial: true, Shape: "ellipse", SizeIsLen: true,
+			SizeLen:  [2]css.Length{css.Px(cw), css.Px(ch)},
+			Position: css.Position{X: css.Percent(cr.left), Y: css.Percent(cr.top)},
+			Stops:    []css.ColorStop{{Color: in, Pos: px(cr.cx)}, {Color: out, Hint: px(cr.cx + blur*1.25)}}}
+		cv.drawGradient(g, rect{cr.x, cr.y, cw, ch})
+	}
+	c.Restore()
 }
 
 // drawCollapsedBorders draws the borders of a table in the collapsing

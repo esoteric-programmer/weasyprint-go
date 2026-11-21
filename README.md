@@ -119,12 +119,14 @@ WeasyPrint), `@font-face`, `@counter-style`, `@page`. As in WeasyPrint,
 
 **Values**: all absolute and font-relative units, viewport units, colors
 (named, hex, `rgb()`, `hsl()`, `hwb()`, `currentColor`, system colors),
-linear/radial/repeating gradients, `attr()`, counters and
+linear/radial/repeating gradients (with color hints and transparency),
+`attr()`, counters and
 `counter()`/`counters()` with all predefined counter styles.
 
 **Layout**
 * Block layout with margin collapsing, `box-sizing`, min/max sizes,
-  `overflow` clipping.
+  `overflow` clipping, `text-overflow: ellipsis`, `box-shadow`,
+  `box-decoration-break`.
 * Inline layout: line breaking (UAX #14 style), bidirectional text
   (UAX #9, `direction`, `dir`), Arabic shaping (joining forms, lam-alef),
   `white-space`,
@@ -249,6 +251,11 @@ reproduced:
   document.
 * With `word-break: break-all`, lines are broken as if a hyphen was
   added at the end (Pango reserves its width) although none is drawn.
+* Gradients with three or more stops are not interpolated linearly: a
+  default color hint at 50% of the whole gradient line is used for every
+  segment instead of the middle of each segment.
+* `text-transform: capitalize` uppercases digraphs such as "ǆ" instead of
+  using their titlecase form ("ǅ").
 
 ## Architecture
 

@@ -292,6 +292,11 @@ func (r *Renderer) outlines(pages []*layout.Page) pdf.Ref {
 // ---------------------------------------------------------------- canvas
 
 type canvas struct {
+	// ellipsisRight is the limit of text ending with an ellipsis, or 0.
+	ellipsisRight float64
+	// lineX is the start of the line box being painted, the origin of the
+	// patterns of text decorations.
+	lineX    float64
 	r        *Renderer
 	c        *pdf.Content
 	stack    []*pdf.Content
@@ -669,6 +674,14 @@ func (cv *canvas) paintInlines(b *layout.Box, isRoot bool, decos []decoration) {
 		}
 		return
 	case layout.KLine:
+		savedX := cv.lineX
+		cv.lineX = b.X
+		defer func() { cv.lineX = savedX }()
+		if b.EllipsisRight != 0 {
+			saved := cv.ellipsisRight
+			cv.ellipsisRight = b.EllipsisRight
+			defer func() { cv.ellipsisRight = saved }()
+		}
 	default:
 		if b.Style != nil && b.Kind != layout.KPage {
 			decos = append(append([]decoration{}, decos...), decorationsOf(b.Style)...)
