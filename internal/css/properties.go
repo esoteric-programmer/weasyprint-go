@@ -615,12 +615,20 @@ func parseBorderSpacing(ts []Token, _ *ParseCtx) Value {
 type PageSize [2]Length
 
 var pageSizes = map[string][2]float64{
-	// in mm
+	// in mm, portrait (the sizes of WeasyPrint)
+	"a10": {26, 37}, "a9": {37, 52}, "a8": {52, 74}, "a7": {74, 105},
 	"a6": {105, 148}, "a5": {148, 210}, "a4": {210, 297}, "a3": {297, 420},
-	"b5": {176, 250}, "b4": {250, 353}, "jis-b5": {182, 257}, "jis-b4": {257, 364},
+	"a2": {420, 594}, "a1": {594, 841}, "a0": {841, 1189}, "b10": {31, 44},
+	"b9": {44, 62}, "b8": {62, 88}, "b7": {88, 125}, "b6": {125, 176},
+	"b5": {176, 250}, "b4": {250, 353}, "b3": {353, 500}, "b2": {500, 707},
+	"b1": {707, 1000}, "b0": {1000, 1414}, "c10": {28, 40}, "c9": {40, 57},
+	"c8": {57, 81}, "c7": {81, 114}, "c6": {114, 162}, "c5": {162, 229},
+	"c4": {229, 324}, "c3": {324, 458}, "c2": {458, 648}, "c1": {648, 917},
+	"c0": {917, 1297}, "jis-b10": {32, 45}, "jis-b9": {45, 64},
+	"jis-b8": {64, 91}, "jis-b7": {91, 128}, "jis-b6": {128, 182},
+	"jis-b5": {182, 257}, "jis-b4": {257, 364}, "jis-b3": {364, 515},
+	"jis-b2": {515, 728}, "jis-b1": {728, 1030}, "jis-b0": {1030, 1456},
 	"letter": {215.9, 279.4}, "legal": {215.9, 355.6}, "ledger": {279.4, 431.8},
-	"a2": {420, 594}, "a1": {594, 841}, "a0": {841, 1189}, "b6": {125, 176},
-	"b3": {353, 500}, "c4": {229, 324}, "c5": {162, 229}, "c6": {114, 162},
 }
 
 func parseSize(ts []Token, _ *ParseCtx) Value {
@@ -1331,3 +1339,28 @@ var (
 func NumProps() int { return len(Props) }
 
 var _ = math.Pi
+
+// ParsePageSize parses a value of the @page size descriptor ("A4",
+// "letter landscape", "210mm 297mm"...) into CSS px. Relative lengths and
+// auto are rejected.
+func ParsePageSize(value string) ([2]float64, bool) {
+	var ts []Token
+	for _, t := range Tokenize(strings.ToLower(value)) {
+		if t.Type != TWhitespace {
+			ts = append(ts, t)
+		}
+	}
+	ps, ok := parseSize(ts, nil).(PageSize)
+	if !ok || len(ts) == 0 {
+		return [2]float64{}, false
+	}
+	var out [2]float64
+	for i, l := range ps {
+		k, ok := unitToPx[l.Unit]
+		if !ok || l.V <= 0 {
+			return [2]float64{}, false
+		}
+		out[i] = l.V * k
+	}
+	return out, true
+}

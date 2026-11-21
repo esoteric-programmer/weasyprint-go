@@ -140,12 +140,12 @@ func sortForScript(faces []*fonts.Face, strong []bool, sc int) []*fonts.Face {
 		}
 	}
 	for i, f := range faces {
-		if !strong[i] && f.Font.HasRune(sample) {
+		if !strong[i] && f.HasRune(sample) {
 			out = append(out, f)
 		}
 	}
 	for i, f := range faces {
-		if !strong[i] && !f.Font.HasRune(sample) {
+		if !strong[i] && !f.HasRune(sample) {
 			out = append(out, f)
 		}
 	}

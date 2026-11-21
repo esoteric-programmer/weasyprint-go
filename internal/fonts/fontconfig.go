@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // A subset of fontconfig's configuration (fonts.conf), used to expand font
@@ -42,6 +44,17 @@ type FontConfig struct {
 	rules []fcRule
 	// Dirs are the font directories declared with <dir>.
 	Dirs []string
+
+	sources map[string]time.Time // files and directories read, with mtimes
+}
+
+// The parsed configuration is shared by all libraries while none of its
+// files changed.
+var fcCache struct {
+	sync.Mutex
+	path string
+	fc   *FontConfig
+	ok   bool
 }
 
 // LoadFontConfig reads the fontconfig configuration of the system (or the
@@ -55,15 +68,34 @@ func LoadFontConfig() *FontConfig {
 		}
 		path = filepath.Join(dir, "fonts.conf")
 	}
-	fc := &FontConfig{}
-	seen := map[string]bool{}
-	if !fc.loadFile(path, seen, 0) {
-		return nil
+	fcCache.Lock()
+	defer fcCache.Unlock()
+	if fcCache.ok && fcCache.path == path && fcCache.fc.fresh() {
+		if len(fcCache.fc.rules) == 0 && len(fcCache.fc.Dirs) == 0 {
+			return nil
+		}
+		return fcCache.fc
 	}
+	fc := &FontConfig{sources: map[string]time.Time{}}
+	fc.loadFile(path, map[string]bool{}, 0)
+	fcCache.path, fcCache.fc, fcCache.ok = path, fc, true
 	if len(fc.rules) == 0 && len(fc.Dirs) == 0 {
 		return nil
 	}
 	return fc
+}
+
+func (fc *FontConfig) fresh() bool {
+	for p, mt := range fc.sources {
+		var cur time.Time
+		if st, err := os.Stat(p); err == nil {
+			cur = st.ModTime()
+		}
+		if !cur.Equal(mt) {
+			return false
+		}
+	}
+	return true
 }
 
 type xmlNode struct {
@@ -88,6 +120,13 @@ func (fc *FontConfig) loadFile(path string, seen map[string]bool, depth int) boo
 	}
 	seen[path] = true
 	st, err := os.Stat(path)
+	if fc.sources != nil {
+		var mt time.Time
+		if err == nil {
+			mt = st.ModTime()
+		}
+		fc.sources[path] = mt
+	}
 	if err != nil {
 		return false
 	}

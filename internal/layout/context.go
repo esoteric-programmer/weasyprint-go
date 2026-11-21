@@ -26,6 +26,9 @@ type Context struct {
 	Images  *images.Cache
 	Builder *Builder
 	Warn    func(string)
+	// DefaultPageSize is the page size used when @page size is auto
+	// (A4 if zero).
+	DefaultPageSize [2]float64
 
 	// Block formatting contexts: stack of excluded shapes (floats).
 	excluded    []*Box

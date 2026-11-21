@@ -35,6 +35,7 @@ func main() {
 	fs.StringVar(baseURL, "base-url", "", "base for relative URLs in the HTML input")
 	hints := fs.Bool("p", false, "follow HTML presentational hints")
 	fs.BoolVar(hints, "presentational-hints", false, "follow HTML presentational hints")
+	pageSize := fs.String("page-size", "", "page size of all pages, overriding the document's CSS\n(\"A4\", \"A5 landscape\", \"letter\", \"210mm 297mm\"...)")
 	uncompressed := fs.Bool("uncompressed-pdf", false, "do not compress PDF content streams")
 	verbose := fs.Bool("v", false, "show warnings and information messages")
 	fs.BoolVar(verbose, "verbose", false, "show warnings and information messages")
@@ -54,7 +55,7 @@ func main() {
 		name := strings.TrimLeft(a, "-")
 		if !strings.Contains(name, "=") {
 			switch name {
-			case "e", "encoding", "s", "stylesheet", "m", "media-type", "u", "base-url":
+			case "e", "encoding", "s", "stylesheet", "m", "media-type", "u", "base-url", "page-size":
 				if i+1 < len(args) {
 					flags = append(flags, args[i+1])
 					i++
@@ -119,6 +120,15 @@ func main() {
 			os.Exit(1)
 		}
 		opts.Stylesheets = append(opts.Stylesheets, sheet)
+	}
+	if *pageSize != "" {
+		if _, err := weasyprint.PageSize(*pageSize); err != nil {
+			fmt.Fprintln(os.Stderr, "weasyprint:", err)
+			os.Exit(2)
+		}
+		// Like a user stylesheet setting the size of all pages.
+		opts.Stylesheets = append(opts.Stylesheets,
+			weasyprint.CSSFromString("@page { size: "+*pageSize+" !important }", ""))
 	}
 	if *verbose && !*quiet {
 		opts.Warn = func(msg string) { fmt.Fprintln(os.Stderr, "WARNING:", msg) }

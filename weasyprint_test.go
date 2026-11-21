@@ -2,9 +2,11 @@ package weasyprint
 
 import (
 	"bytes"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/layout"
@@ -227,5 +229,68 @@ func TestImagesDataURL(t *testing.T) {
 	_, pdf := render(t, `<img src="data:image/png;base64,`+png+`" style="width:10px">`, nil)
 	if !bytes.Contains(pdf, []byte("/Subtype /Image")) {
 		t.Errorf("image not embedded")
+	}
+}
+
+// Renders share parsed system fonts: concurrent renders must be safe.
+func TestConcurrentRenders(t *testing.T) {
+	docs := []string{
+		`<p style="font-family:serif">Hello <b>world</b> ﬁ AV <i>italic</i></p>`,
+		`<p lang="ar" dir="rtl">مرحبا بالعالم</p><p style="font-variant:small-caps">Small caps</p>`,
+		`<p style="font-family:sans-serif">日本語のテキスト and 😀 emoji</p>`,
+		`<pre>monospace	tabs</pre><p lang="en" style="hyphens:auto;width:50px">hyphenation</p>`,
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(src string) {
+			defer wg.Done()
+			if _, err := HTMLFromString(src, "").PDF(nil); err != nil {
+				errs <- err
+			}
+		}(docs[i%len(docs)])
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+func TestPageSizes(t *testing.T) {
+	mm := 96 / 25.4
+	for _, c := range []struct {
+		value string
+		w, h  float64
+	}{
+		{"A4", 210 * mm, 297 * mm}, {"a5 landscape", 210 * mm, 148 * mm},
+		{"portrait jis-b6", 128 * mm, 182 * mm}, {"Letter", 816, 1056},
+		{"C3", 324 * mm, 458 * mm}, {"100mm 2in", 100 * mm, 192}, {"5cm", 50 * mm, 50 * mm},
+	} {
+		s, err := PageSize(c.value)
+		if err != nil || math.Abs(s[0]-c.w) > 1e-6 || math.Abs(s[1]-c.h) > 1e-6 {
+			t.Errorf("PageSize(%q) = %v, %v; want %v×%v", c.value, s, err, c.w, c.h)
+		}
+	}
+	for _, bad := range []string{"", "auto", "huge", "10em", "A4 A5", "-1mm"} {
+		if _, err := PageSize(bad); err == nil {
+			t.Errorf("PageSize(%q) accepted", bad)
+		}
+	}
+	// The default page size of one render doesn't leak into the next.
+	a5, _ := PageSize("A5")
+	doc, _ := render(t, `<p>x`, &Options{DefaultPageSize: a5})
+	if math.Abs(doc.Pages[0].Width-a5[0]) > 1e-6 {
+		t.Errorf("default size not applied: %v", doc.Pages[0].Width)
+	}
+	doc, _ = render(t, `<p>x`, nil)
+	if math.Abs(doc.Pages[0].Width-210*mm) > 1e-6 {
+		t.Errorf("default size leaked into the next render: %v", doc.Pages[0].Width)
+	}
+	// The document's size wins over the default size.
+	doc, _ = render(t, `<style>@page{size:A3}</style><p>x`, &Options{DefaultPageSize: a5})
+	if math.Abs(doc.Pages[0].Width-297*mm) > 1e-6 {
+		t.Errorf("document size not used: %v", doc.Pages[0].Width)
 	}
 }

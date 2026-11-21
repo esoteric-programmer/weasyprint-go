@@ -169,9 +169,20 @@ type Options struct {
 	Warn func(string)
 	// FontDirs replaces the default system font directories if not nil.
 	FontDirs []string
-	// DefaultPageSize is the page size in CSS px when @page size is auto
-	// (default A4).
+	// DefaultPageSize is the page size in CSS px of pages whose size the
+	// document's CSS doesn't set (default A4). See PageSize.
 	DefaultPageSize [2]float64
+}
+
+// PageSize parses a CSS page size such as "A4", "A5 landscape", "letter"
+// or "210mm 297mm" (the values of the @page size descriptor) into CSS px,
+// for Options.DefaultPageSize.
+func PageSize(value string) ([2]float64, error) {
+	size, ok := css.ParsePageSize(value)
+	if !ok {
+		return size, fmt.Errorf("invalid page size %q", value)
+	}
+	return size, nil
 }
 
 // Document is a rendered document.
@@ -346,17 +357,19 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	shaper := text.NewShaper(lib)
 	imgs := images.NewCache(fetcher)
 	imgs.Warn = warn
+	defaultSize := layout.A4
 	if opts.DefaultPageSize[0] > 0 && opts.DefaultPageSize[1] > 0 {
-		layout.DefaultPageSize = opts.DefaultPageSize
+		defaultSize = opts.DefaultPageSize
 	}
 
-	resolver.Viewport = layout.DefaultPageSize
+	resolver.Viewport = defaultSize
 	resolver.ResolveAll()
 	builder := layout.NewBuilder(resolver, imgs, h.BaseURL)
 	builder.Warn = warn
 	root := builder.Build(h.root)
 	ctx := layout.NewContext(shaper, resolver, imgs, builder)
 	ctx.Warn = warn
+	ctx.DefaultPageSize = defaultSize
 	// Viewport units are relative to the first page size.
 	if w, hh := ctx.FirstPageSize(root); w != resolver.Viewport[0] || hh != resolver.Viewport[1] {
 		resolver.Viewport = [2]float64{w, hh}
@@ -364,6 +377,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 		root = builder.Build(h.root)
 		ctx = layout.NewContext(shaper, resolver, imgs, builder)
 		ctx.Warn = warn
+		ctx.DefaultPageSize = defaultSize
 	}
 	pages := ctx.LayoutDocument(root)
 	if builder.UsesTargets {
@@ -372,6 +386,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 		root = builder.Build(h.root)
 		ctx = layout.NewContext(shaper, resolver, imgs, builder)
 		ctx.Warn = warn
+		ctx.DefaultPageSize = defaultSize
 		pages = ctx.LayoutDocument(root)
 	}
 	if os.Getenv("WEASYPRINT_GO_DEBUG") != "" {

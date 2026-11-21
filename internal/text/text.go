@@ -159,12 +159,13 @@ func (s *Shaper) Faces(spec Spec) []*fonts.Face {
 	req := fonts.Request{Weight: spec.Weight, Italic: spec.Italic, Stretch: spec.Stretch}
 	var out []*fonts.Face
 	var strong []bool
-	seen := map[*fonts.Font]bool{}
+	seen := map[*fonts.FaceInfo]bool{}
 	if ordered, ok := s.Lib.OrderedFamilyValues(spec.Families); ok {
-		// Families in fontconfig order, as Pango selects them.
+		// Families in fontconfig order, as Pango selects them. Their
+		// fonts are loaded when used.
 		for _, fam := range ordered {
-			if f := s.Lib.ResolveExact(fam.Name, req); f != nil && !seen[f.Font] {
-				seen[f.Font] = true
+			if f := s.Lib.ResolveLazy(fam.Name, req); f != nil && !seen[f.Info] {
+				seen[f.Info] = true
 				out = append(out, f)
 				strong = append(strong, fam.Strong)
 				if len(out) >= 12 {
@@ -174,8 +175,8 @@ func (s *Shaper) Faces(spec Spec) []*fonts.Face {
 		}
 	} else {
 		for _, fam := range spec.Families {
-			if f := s.Lib.Resolve(fam, req); f != nil && !seen[f.Font] {
-				seen[f.Font] = true
+			if f := s.Lib.Resolve(fam, req); f != nil && !seen[f.Info] {
+				seen[f.Info] = true
 				out = append(out, f)
 			}
 		}
@@ -235,7 +236,21 @@ func (s *Shaper) PrimaryMetrics(spec Spec) Metrics {
 		return Metrics{Ascent: spec.Size * 0.8, Descent: spec.Size * 0.2, XHeight: spec.Size * 0.5, CapHeight: spec.Size * 0.7,
 			UnderlinePos: spec.Size * 0.1, UnderlineThick: spec.Size / 16, StrikeoutPos: spec.Size * 0.3, StrikeoutThick: spec.Size / 16}
 	}
-	return FaceMetrics(faces[0].Font, spec.Size)
+	if f := firstLoaded(faces); f != nil {
+		return FaceMetrics(f.Font, spec.Size)
+	}
+	return Metrics{Ascent: spec.Size * 0.8, Descent: spec.Size * 0.2, XHeight: spec.Size * 0.5, CapHeight: spec.Size * 0.7,
+		UnderlinePos: spec.Size * 0.1, UnderlineThick: spec.Size / 16, StrikeoutPos: spec.Size * 0.3, StrikeoutThick: spec.Size / 16}
+}
+
+// firstLoaded returns the first face whose font can be loaded.
+func firstLoaded(faces []*fonts.Face) *fonts.Face {
+	for _, f := range faces {
+		if f.Loaded() {
+			return f
+		}
+	}
+	return nil
 }
 
 // FaceMetrics returns the metrics of a font at a size.
@@ -308,15 +323,15 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 		if isDefaultIgnorable(r) || r == '\n' || r == '\r' || r == '\t' {
 			if i > 0 {
 				face = runeFace[i-1]
-			} else if len(faces) > 0 {
-				face = faces[0]
+			} else {
+				face = firstLoaded(faces)
 			}
 		} else if i > 0 && runeFace[i-1] != nil && isNonGraphic(r) && sameRun(i) && runeFace[i-1].Font.HasRune(r) {
 			// Like Pango, spaces keep the font of the preceding text.
 			face = runeFace[i-1]
 		} else {
 			for _, f := range s.facesForScript(spec, runScript[i]) {
-				if f.Font.HasRune(r) && (f.Info == nil || f.Info.Covers(r)) {
+				if f.HasRune(r) && (f.Info == nil || f.Info.Covers(r)) && f.Loaded() {
 					face = f
 					break
 				}
@@ -328,8 +343,8 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 			if face == nil {
 				face = s.fallback(spec, r, req)
 			}
-			if face == nil && len(faces) > 0 {
-				face = faces[0]
+			if face == nil {
+				face = firstLoaded(faces)
 			}
 		}
 		runeFace[i] = face

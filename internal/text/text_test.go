@@ -41,6 +41,7 @@ func TestShape(t *testing.T) {
 	m := s.PrimaryMetrics(Spec{Families: []string{"DejaVu Serif"}, Weight: 400, Size: 16})
 	t.Logf("metrics %+v", m)
 	b := s.Faces(Spec{Families: []string{"sans-serif"}, Weight: 700, Size: 16})
+	b[0].Loaded()
 	t.Logf("sans bold: %s %s synth=%v", b[0].Font.Family, b[0].Font.Subfamily, b[0].SynthBold)
 	data := sh.Glyphs[0].Face.Font.Subset(map[uint16]bool{sh.Glyphs[0].ID: true})
 	if _, err := fonts.Parse(data, 0); err != nil {

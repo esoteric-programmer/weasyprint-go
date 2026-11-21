@@ -19,11 +19,14 @@ type Page struct {
 	Blank      bool
 }
 
-// DefaultPageSize is used when @page size is auto (A4 in CSS px).
-var DefaultPageSize = [2]float64{210 * 96 / 25.4, 297 * 96 / 25.4}
+// A4 is the default page size, used when @page size is auto (CSS px).
+var A4 = [2]float64{210 * 96 / 25.4, 297 * 96 / 25.4}
 
 func (c *Context) pageGeometry(style *css.Style) *Box {
-	w, h := DefaultPageSize[0], DefaultPageSize[1]
+	w, h := A4[0], A4[1]
+	if c.DefaultPageSize[0] > 0 && c.DefaultPageSize[1] > 0 {
+		w, h = c.DefaultPageSize[0], c.DefaultPageSize[1]
+	}
 	if ps, ok := style.Get(css.PSize).(css.PageSize); ok {
 		w, h = ps[0].V, ps[1].V
 	}

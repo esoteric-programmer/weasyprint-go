@@ -131,34 +131,13 @@ func (l *Library) scan() {
 		return
 	}
 	l.scanned = true
-	seen := map[string]bool{}
 	dirs := l.Dirs
 	if !l.CustomDirs {
 		if fc := l.fontConfig(); fc != nil {
 			dirs = append(append([]string{}, dirs...), fc.Dirs...)
 		}
 	}
-	for _, dir := range dirs {
-		filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() {
-				return nil
-			}
-			real, err := filepath.EvalSymlinks(path)
-			if err != nil || seen[real] {
-				return nil
-			}
-			seen[real] = true
-			ext := strings.ToLower(filepath.Ext(path))
-			switch ext {
-			case ".ttf", ".otf", ".ttc", ".otc", ".woff":
-				l.indexFile(real)
-			}
-			return nil
-		})
-	}
+	l.faces = append(l.faces, cachedScan(dirs, indexFile)...)
 	l.byNorm = map[string][]*FaceInfo{}
 	for _, fi := range l.faces {
 		for _, fam := range fi.Families {
@@ -183,7 +162,7 @@ func (r fileReader) read(off, n int) []byte {
 	return b[:m]
 }
 
-func (l *Library) indexFile(path string) {
+func indexFile(path string) (faces []*FaceInfo) {
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -203,7 +182,9 @@ func (l *Library) indexFile(path string) {
 		if err != nil {
 			return
 		}
-		l.addInfo(path, 0, font)
+		if fi := newFaceInfo(path, 0, font); fi != nil {
+			faces = append(faces, fi)
+		}
 		return
 	}
 	offsets := []int{0}
@@ -269,13 +250,15 @@ func (l *Library) indexFile(path string) {
 		}
 		_, font.Variable = font.tables["fvar"]
 		font.parseNames()
-		if fi := l.addInfo(path, idx, font); fi != nil {
+		if fi := newFaceInfo(path, idx, font); fi != nil {
 			fi.cmapOff, fi.cmapLen = font.tabOff["cmap"], font.tabOff["cmap-len"]
+			faces = append(faces, fi)
 		}
 	}
+	return faces
 }
 
-func (l *Library) addInfo(path string, idx int, font *Font) *FaceInfo {
+func newFaceInfo(path string, idx int, font *Font) *FaceInfo {
 	fi := &FaceInfo{Path: path, Index: idx, Weight: font.Weight, Italic: font.Italic,
 		Stretch: font.Stretch, Variable: font.Variable,
 		FullName: strings.ToLower(font.FullName), PostScript: strings.ToLower(font.PostScript)}
@@ -303,7 +286,6 @@ func (l *Library) addInfo(path string, idx int, font *Font) *FaceInfo {
 		fi.coverage = rangesOf(font.Cmap())
 		fi.coverageLoaded = true
 	}
-	l.faces = append(l.faces, fi)
 	return fi
 }
 
@@ -338,15 +320,7 @@ func (l *Library) covers(fi *FaceInfo, r rune) bool {
 	}
 	if !fi.coverageLoaded {
 		fi.coverageLoaded = true
-		if fi.cmapLen > 0 && fi.cmapLen < 16<<20 {
-			if fh, err := os.Open(fi.Path); err == nil {
-				data := make([]byte, fi.cmapLen)
-				if n, _ := fh.ReadAt(data, int64(fi.cmapOff)); n == fi.cmapLen {
-					fi.coverage = cmapRanges(data)
-				}
-				fh.Close()
-			}
-		}
+		fi.coverage = loadCoverage(fi)
 	}
 	cov := fi.coverage
 	i := sort.Search(len(cov), func(i int) bool { return cov[i].hi >= r })
@@ -411,12 +385,11 @@ func (l *Library) Load(fi *FaceInfo) *Font {
 	if f, ok := l.loaded[fi]; ok {
 		return f
 	}
-	data, err := os.ReadFile(fi.Path)
-	if err != nil {
+	f, err := loadShared(fi.Path, fi.Index)
+	if f == nil && err == nil {
 		l.loaded[fi] = nil
 		return nil
 	}
-	f, err := Parse(data, fi.Index)
 	if err != nil {
 		l.warn("Failed to load font " + fi.Path + ": " + err.Error())
 		l.loaded[fi] = nil
@@ -734,6 +707,55 @@ type Face struct {
 	Info        *FaceInfo
 	SynthBold   bool
 	SynthItalic bool
+
+	// Lazily resolved faces (see ResolveLazy) load Font on demand.
+	lib  *Library
+	once sync.Once
+}
+
+// ResolveLazy selects the face of an exact family name like ResolveExact,
+// but doesn't load its font: like Pango, fonts of a family list are only
+// loaded when they are used. Call Loaded before reading Font.
+func (l *Library) ResolveLazy(family string, req Request) *Face {
+	l.mu.Lock()
+	name := strings.ToLower(family)
+	faces, ok := l.user[name]
+	if !ok {
+		l.scan()
+		faces = l.byFamily[name]
+		if len(faces) == 0 {
+			faces = l.byNorm[normFamily(family)]
+		}
+	}
+	l.mu.Unlock()
+	if len(faces) == 0 {
+		return nil
+	}
+	return &Face{Info: Select(faces, req), lib: l}
+}
+
+// Loaded loads the font of a lazily resolved face and reports whether it
+// is available.
+func (f *Face) Loaded() bool {
+	f.once.Do(func() {
+		if f.Font == nil && f.lib != nil {
+			f.lib.mu.Lock()
+			f.Font = f.lib.Load(f.Info)
+			f.lib.mu.Unlock()
+		}
+	})
+	return f.Font != nil
+}
+
+// HasRune reports whether the face maps r, without loading a lazily
+// resolved font.
+func (f *Face) HasRune(r rune) bool {
+	if f.lib == nil {
+		return f.Font != nil && f.Font.HasRune(r)
+	}
+	f.lib.mu.Lock()
+	defer f.lib.mu.Unlock()
+	return f.lib.covers(f.Info, r)
 }
 
 // Resolve returns the selected face for a family name, or nil.

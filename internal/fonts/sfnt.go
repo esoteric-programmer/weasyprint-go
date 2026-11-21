@@ -57,6 +57,10 @@ type Font struct {
 	substs     map[string]map[uint16]uint16
 	substMu    sync.Mutex
 	locaLong   bool
+
+	// Lazily parsed tables; fonts are shared between renders, so their
+	// parsing is synchronized.
+	cmapOnce, kernOnce, ligOnce sync.Once
 }
 
 type Ligature struct {
@@ -338,9 +342,7 @@ func (f *Font) Families() []string {
 
 // GlyphIndex returns the glyph for a rune, or 0.
 func (f *Font) GlyphIndex(r rune) uint16 {
-	if f.cmap == nil {
-		f.parseCmap()
-	}
+	f.cmapOnce.Do(f.parseCmap)
 	return f.cmap[r]
 }
 
@@ -349,9 +351,7 @@ func (f *Font) HasRune(r rune) bool { return f.GlyphIndex(r) != 0 }
 
 // Cmap returns the full character map.
 func (f *Font) Cmap() map[rune]uint16 {
-	if f.cmap == nil {
-		f.parseCmap()
-	}
+	f.cmapOnce.Do(f.parseCmap)
 	return f.cmap
 }
 
@@ -505,9 +505,7 @@ type pairPos2 struct {
 
 // Kern returns the kerning adjustment between two glyphs in font units.
 func (f *Font) Kern(left, right uint16) float64 {
-	if f.kern == nil && f.gposKern == nil {
-		f.parseKerning()
-	}
+	f.kernOnce.Do(f.parseKerning)
 	if f.gposKern != nil {
 		for _, p := range f.gposKern.format1 {
 			if idx, ok := p.coverage[left]; ok {
@@ -922,9 +920,7 @@ func (f *Font) SingleSubstitutions(feature string) map[uint16]uint16 {
 
 // Ligatures returns standard ligatures (GSUB liga) starting with a glyph.
 func (f *Font) Ligatures(first uint16) []Ligature {
-	if f.ligatures == nil {
-		f.parseLigatures()
-	}
+	f.ligOnce.Do(f.parseLigatures)
 	return f.ligatures[first]
 }
 
