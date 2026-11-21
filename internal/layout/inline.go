@@ -298,7 +298,8 @@ func (it *lineIterator) next() (*Box, Skip, bool) {
 	strutH, _ := it.c.strut(it.src.Style)
 	placedFloats = map[int]*Box{}
 	y := it.y
-	for attempt := 0; attempt < 6; attempt++ {
+	retries := 0
+	for {
 		probe := &Box{Kind: KLine, Style: it.src.Style, X: it.cb.ContentX(), Y: y, H: strutH}
 		x0, y0, avail := it.c.avoidCollisions(probe, it.cbi, it.cb, false)
 		y = y0
@@ -312,7 +313,8 @@ func (it *lineIterator) next() (*Box, Skip, bool) {
 		if len(it.c.excluded) > 0 && line.H > strutH+1e-6 {
 			probe.H = line.H
 			x1, y1, avail1 := it.c.avoidCollisions(probe, it.cbi, it.cb, false)
-			if x1 != x0 || y1 != y0 || avail1 != avail {
+			if (x1 != x0 || y1 != y0 || avail1 != avail) && retries < 4 {
+				retries++
 				strutH = line.H
 				y = y1
 				continue

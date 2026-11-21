@@ -355,3 +355,26 @@ func (cv *canvas) drawCollapsedBorders(t *layout.Box) {
 		}
 	}
 }
+
+// drawColumnRules draws column rules between the columns of a multi-column
+// container.
+func (cv *canvas) drawColumnRules(b *layout.Box) {
+	s := b.Style
+	st := s.Kw(css.PColumnRuleStyle)
+	w := s.Px(css.PColumnRuleWidth, 0)
+	if st == "none" || st == "hidden" || w <= 0 || len(b.Children) < 2 {
+		return
+	}
+	col := s.Color(css.PColumnRuleColor)
+	for i := 1; i < len(b.Children); i++ {
+		prev, cur := b.Children[i-1], b.Children[i]
+		if !prev.IsColumn || !cur.IsColumn {
+			continue
+		}
+		x := (prev.X + prev.MarginWidth() + cur.X) / 2
+		top, h := b.ContentY(), b.H
+		var sides [4]sideInfo
+		sides[3] = sideInfo{w, st, col}
+		cv.drawBorderSides(rect{x - w/2, top, w, h}, [4][2]float64{}, sides)
+	}
+}

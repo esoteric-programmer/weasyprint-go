@@ -607,6 +607,9 @@ func (cv *canvas) paintBlocks(b *layout.Box, isRoot bool) {
 			cv.paintBlocks(ch, false)
 		}
 	})
+	if len(b.Children) > 1 && b.Children[0].IsColumn {
+		cv.drawColumnRules(b)
+	}
 }
 
 func (cv *canvas) paintFloats(b *layout.Box, isRoot bool) {

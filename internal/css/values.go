@@ -940,3 +940,20 @@ func (n *calcNode) eval(toPx func(Length) float64) (linear, bool) {
 	}
 	return linear{}, false
 }
+
+// ParseColor parses a CSS color string. currentColor is reported with ok
+// true and current set.
+func ParseColor(s string) (c Color, current bool, ok bool) {
+	ts := RemoveWS(StripWS(Tokenize(s)))
+	if len(ts) != 1 {
+		return Color{}, false, false
+	}
+	v, ok := parseColorToken(ts[0])
+	if !ok {
+		return Color{}, false, false
+	}
+	if k, isKw := v.(Keyword); isKw && k == "currentcolor" {
+		return Color{}, true, true
+	}
+	return v.(Color), false, true
+}

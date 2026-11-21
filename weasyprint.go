@@ -293,7 +293,15 @@ func (h *HTML) documentStylesheets(env *css.Env, warn func(string)) []*css.Style
 }
 
 // Render lays out the document into pages.
-func (h *HTML) Render(opts *Options) (*Document, error) {
+func (h *HTML) Render(opts *Options) (doc *Document, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if os.Getenv("WEASYPRINT_GO_DEBUG") != "" {
+				panic(r)
+			}
+			doc, err = nil, fmt.Errorf("weasyprint: internal error: %v", r)
+		}
+	}()
 	if opts == nil {
 		opts = &Options{}
 	}
@@ -371,7 +379,7 @@ func (h *HTML) Render(opts *Options) (*Document, error) {
 			layout.Dump(os.Stderr, p.Box, 0)
 		}
 	}
-	doc := &Document{Metadata: h.metadata(), pages: pages, shaper: shaper, images: imgs, compress: !opts.Uncompressed}
+	doc = &Document{Metadata: h.metadata(), pages: pages, shaper: shaper, images: imgs, compress: !opts.Uncompressed}
 	for _, p := range pages {
 		doc.Pages = append(doc.Pages, &Page{Width: p.Width, Height: p.Height})
 	}
@@ -447,7 +455,15 @@ func loadFontFaces(lib *fonts.Library, faces []*css.FontFaceRule, f fetch.Fetche
 }
 
 // WritePDF writes the document as PDF.
-func (d *Document) WritePDF(w io.Writer) error {
+func (d *Document) WritePDF(w io.Writer) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if os.Getenv("WEASYPRINT_GO_DEBUG") != "" {
+				panic(r)
+			}
+			err = fmt.Errorf("weasyprint: internal error while drawing: %v", r)
+		}
+	}()
 	m := d.Metadata
 	return draw.Write(w, d.pages, d.shaper, d.images, draw.Options{
 		Compress: d.compress,

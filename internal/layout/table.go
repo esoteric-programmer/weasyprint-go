@@ -544,7 +544,6 @@ func (c *Context) tableLayout(table *Box, bottomSpace float64, skip Skip, wrappe
 	table.ColumnPositions = positions
 	isStart := skip == nil
 	if !isStart {
-		table.NoStartDecor = true
 		table.BT, table.PT = 0, 0
 	}
 	posY := table.ContentY()
@@ -635,6 +634,7 @@ func (c *Context) tableLayout(table *Box, bottomSpace float64, skip Skip, wrappe
 		}
 	}
 	nt := table.CopyWith(newChildren)
+	nt.NoStartDecor = !isStart || table.NoStartDecor
 	nt.Collapse = ti.collapse
 	if resume != nil {
 		nt.NoEndDecor = true

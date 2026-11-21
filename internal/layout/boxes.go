@@ -129,6 +129,8 @@ type Box struct {
 	AbsSource *Box
 	// Outside list marker.
 	IsOutsideMarker bool
+	// Column of a multi-column container.
+	IsColumn bool
 	// Line boxes: resume position, for orphans/widows handling.
 	lineResume Skip
 	// Index of the box in its parent before layout.

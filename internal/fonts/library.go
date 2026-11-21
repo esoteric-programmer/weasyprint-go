@@ -24,6 +24,12 @@ type FaceInfo struct {
 	Variable   bool
 	IsType1    bool
 
+	// Location of the cmap table, for coverage checks without loading
+	// the whole font.
+	cmapOff, cmapLen int
+	coverage         []runeRange
+	coverageLoaded   bool
+
 	// For @font-face faces.
 	font         *Font
 	unicodeRange [][2]rune
@@ -222,6 +228,10 @@ func (l *Library) indexFile(path string) {
 				font.tables[name] = r.read(toff, tlen)
 			case "fvar", "cmap", "glyf", "CFF ":
 				font.tables[name] = nil
+				if name == "cmap" {
+					font.tabOff["cmap"] = toff
+					font.tabOff["cmap-len"] = tlen
+				}
 			}
 		}
 		_, hasCmap := font.tables["cmap"]
@@ -244,11 +254,13 @@ func (l *Library) indexFile(path string) {
 		}
 		_, font.Variable = font.tables["fvar"]
 		font.parseNames()
-		l.addInfo(path, idx, font)
+		if fi := l.addInfo(path, idx, font); fi != nil {
+			fi.cmapOff, fi.cmapLen = font.tabOff["cmap"], font.tabOff["cmap-len"]
+		}
 	}
 }
 
-func (l *Library) addInfo(path string, idx int, font *Font) {
+func (l *Library) addInfo(path string, idx int, font *Font) *FaceInfo {
 	fi := &FaceInfo{Path: path, Index: idx, Weight: font.Weight, Italic: font.Italic,
 		Stretch: font.Stretch, Variable: font.Variable,
 		FullName: strings.ToLower(font.FullName), PostScript: strings.ToLower(font.PostScript)}
@@ -270,9 +282,60 @@ func (l *Library) addInfo(path string, idx int, font *Font) {
 		fi.Families = append(fi.Families, strings.ToLower(fam))
 	}
 	if len(fi.Families) == 0 {
-		return
+		return nil
+	}
+	if font.cmap != nil || font.Data != nil {
+		fi.coverage = rangesOf(font.Cmap())
+		fi.coverageLoaded = true
 	}
 	l.faces = append(l.faces, fi)
+	return fi
+}
+
+type runeRange struct{ lo, hi rune }
+
+func rangesOf(cmap map[rune]uint16) []runeRange {
+	runes := make([]rune, 0, len(cmap))
+	for r, g := range cmap {
+		if g != 0 {
+			runes = append(runes, r)
+		}
+	}
+	sort.Slice(runes, func(i, j int) bool { return runes[i] < runes[j] })
+	var out []runeRange
+	for _, r := range runes {
+		if n := len(out); n > 0 && out[n-1].hi+1 == r {
+			out[n-1].hi = r
+		} else {
+			out = append(out, runeRange{r, r})
+		}
+	}
+	return out
+}
+
+// covers reports whether a face maps r, reading only its cmap table.
+func (l *Library) covers(fi *FaceInfo, r rune) bool {
+	if fi.font != nil {
+		return fi.font.HasRune(r)
+	}
+	if f, ok := l.loaded[fi]; ok && f != nil {
+		return f.HasRune(r)
+	}
+	if !fi.coverageLoaded {
+		fi.coverageLoaded = true
+		if fi.cmapLen > 0 && fi.cmapLen < 16<<20 {
+			if fh, err := os.Open(fi.Path); err == nil {
+				data := make([]byte, fi.cmapLen)
+				if n, _ := fh.ReadAt(data, int64(fi.cmapOff)); n == fi.cmapLen {
+					fi.coverage = cmapRanges(data)
+				}
+				fh.Close()
+			}
+		}
+	}
+	cov := fi.coverage
+	i := sort.Search(len(cov), func(i int) bool { return cov[i].hi >= r })
+	return i < len(cov) && cov[i].lo <= r
 }
 
 // AddFontFace registers an @font-face font.
@@ -572,9 +635,10 @@ func (l *Library) Fallback(r rune, req Request) *Face {
 	try := func(names []string) *FaceInfo {
 		for _, n := range names {
 			for _, fi := range l.byFamily[strings.ToLower(n)] {
-				f := l.Load(fi)
-				if f != nil && f.HasRune(r) {
-					return fi
+				if l.covers(fi, r) {
+					if f := l.Load(fi); f != nil && f.HasRune(r) {
+						return fi
+					}
 				}
 			}
 		}
@@ -584,10 +648,11 @@ func (l *Library) Fallback(r rune, req Request) *Face {
 	if fi == nil && !unicode.IsSpace(r) && !unicode.IsControl(r) {
 		// Last resort: try every font.
 		for _, cand := range l.faces {
-			f := l.Load(cand)
-			if f != nil && f.HasRune(r) {
-				fi = cand
-				break
+			if l.covers(cand, r) {
+				if f := l.Load(cand); f != nil && f.HasRune(r) {
+					fi = cand
+					break
+				}
 			}
 		}
 	}
@@ -603,7 +668,7 @@ func (l *Library) faceFor(fi *FaceInfo, req Request, r rune) *Face {
 	if len(fi.Families) > 0 {
 		if fs := l.byFamily[fi.Families[0]]; len(fs) > 0 {
 			best := Select(fs, req)
-			if f := l.Load(best); f != nil && f.HasRune(r) {
+			if l.covers(best, r) {
 				fi = best
 			}
 		}
@@ -639,4 +704,58 @@ func fallbackFamilies(r rune) []string {
 		return []string{"Noto Emoji", "Symbola", "Noto Sans Symbols 2", "DejaVu Sans"}
 	}
 	return base
+}
+
+// cmapRanges extracts the covered character ranges of a cmap table without
+// building a full character map (segments are taken as a whole).
+func cmapRanges(cm []byte) []runeRange {
+	if len(cm) < 4 {
+		return nil
+	}
+	n := int(u16(cm, 2))
+	best, bestOff := -1, -1
+	for i := 0; i < n; i++ {
+		r := 4 + 8*i
+		platform, enc := u16(cm, r), u16(cm, r+2)
+		off := int(u32(cm, r+4))
+		if off+2 > len(cm) {
+			continue
+		}
+		format := u16(cm, off)
+		score := -1
+		switch {
+		case format == 12 && (platform == 3 && enc == 10 || platform == 0):
+			score = 3
+		case format == 4 && (platform == 3 || platform == 0):
+			score = 2
+		}
+		if score > best {
+			best, bestOff = score, off
+		}
+	}
+	if bestOff < 0 {
+		f := &Font{tables: map[string][]byte{"cmap": cm}}
+		return rangesOf(f.Cmap())
+	}
+	t := cm[bestOff:]
+	var out []runeRange
+	switch u16(t, 0) {
+	case 4:
+		segX2 := int(u16(t, 6))
+		for s := 0; s < segX2/2; s++ {
+			end := rune(u16(t, 14+2*s))
+			start := rune(u16(t, 16+segX2+2*s))
+			if start > end || start == 0xffff {
+				continue
+			}
+			out = append(out, runeRange{start, end})
+		}
+	case 12:
+		ng := int(u32(t, 12))
+		for i := 0; i < ng && 16+12*i+12 <= len(t); i++ {
+			out = append(out, runeRange{rune(u32(t, 16+12*i)), rune(u32(t, 16+12*i+4))})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].lo < out[j].lo })
+	return out
 }

@@ -147,6 +147,17 @@ func (f *Font) compositeComponents(g int) []uint16 {
 // given glyphs (glyph IDs are preserved). CFF fonts are returned whole.
 func (f *Font) Subset(glyphs map[uint16]bool) []byte {
 	if f.IsCFF {
+		if cff, ok := f.tables["CFF "]; ok {
+			if sub, err := subsetCFF(cff, glyphs); err == nil {
+				tables := map[string][]byte{"CFF ": sub}
+				for _, t := range []string{"head", "hhea", "hmtx", "maxp", "OS/2", "name", "post", "cmap"} {
+					if d, ok := f.tables[t]; ok {
+						tables[t] = d
+					}
+				}
+				return buildSFNT([]byte("OTTO"), tables)
+			}
+		}
 		return f.Standalone()
 	}
 	glyf := f.tables["glyf"]

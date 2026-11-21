@@ -103,7 +103,12 @@ func (c *Context) blockBoxLayout(box *Box, bottomSpace float64, skip Skip, cb *B
 		c.tableWrapperWidth(box, cbi)
 	}
 	blockLevelWidth(box, cbi.W, true)
-	res := c.blockContainerLayout(box, bottomSpace, skip, pageIsEmpty, abs, fixed, adjoining, discard, cbi)
+	var res blockResult
+	if isMulticol(box) {
+		res = c.columnsLayout(box, bottomSpace, skip, cbi, pageIsEmpty, abs, fixed, adjoining)
+	} else {
+		res = c.blockContainerLayout(box, bottomSpace, skip, pageIsEmpty, abs, fixed, adjoining, discard, cbi)
+	}
 	nb := res.box
 	if nb == nil {
 		return res
@@ -304,8 +309,10 @@ func pageValues(b *Box) (string, string) {
 		return start, end
 	}
 	if len(children) > 0 {
-		s, _ := pageValues(children[0])
-		_, e := pageValues(children[len(children)-1])
+		s, e := pageValues(children[0])
+		if len(children) > 1 {
+			_, e = pageValues(children[len(children)-1])
+		}
 		if s != "" {
 			start = s
 		}
@@ -384,7 +391,6 @@ func (c *Context) blockContainerLayout(box *Box, bottomSpace float64, skip Skip,
 	}
 	isStart := skip == nil
 	if !isStart {
-		box.NoStartDecor = true
 		box.MT, box.PT, box.BT = 0, 0, 0
 	}
 	discard = discard || box.Style.Kw(css.PContinue) == "discard"

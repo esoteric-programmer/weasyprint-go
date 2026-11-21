@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/pprof"
 	"strings"
 
 	weasyprint "github.com/esoteric-programmer/weasyprint-go"
@@ -72,6 +73,12 @@ func main() {
 		os.Exit(2)
 	}
 	input, output := positional[0], positional[1]
+	if prof := os.Getenv("WEASYPRINT_GO_CPUPROFILE"); prof != "" {
+		if f, err := os.Create(prof); err == nil {
+			pprof.StartCPUProfile(f)
+			defer pprof.StopCPUProfile()
+		}
+	}
 
 	var doc *weasyprint.HTML
 	var err error
