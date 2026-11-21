@@ -1,0 +1,5 @@
+/* Additional user agent rules used by WeasyPrint-Go to express link and
+   anchor handling (done in Python code by WeasyPrint) as CSS. */
+a[href], area[href] { link: attr(href) }
+[id] { anchor: attr(id) }
+a[name] { anchor: attr(name) }
