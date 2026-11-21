@@ -69,6 +69,16 @@ type Options struct {
 	// Font options: embed whole fonts, keep hinting.
 	FullFonts bool
 	Hinting   bool
+	// Zoom scales the pages (1 by default).
+	Zoom float64
+}
+
+// scale returns the number of PDF points per CSS pixel.
+func (r *Renderer) scale() float64 {
+	if r.opts.Zoom > 0 {
+		return 0.75 * r.opts.Zoom
+	}
+	return 0.75
 }
 
 type anchorPos struct {
@@ -97,6 +107,9 @@ type Renderer struct {
 	fm          *fontManager
 	shaper      *text.Shaper
 	imgRefs     map[*images.Image]pdf.Ref
+	imgOrder    []*images.Image
+	imgRatio    map[*images.Image]float64
+	imgInterp   map[*images.Image]bool
 	colorGlyphs map[colorGlyphKey]*images.Image
 	pageRefs    []pdf.Ref
 	anchors     map[string]anchorPos
@@ -113,7 +126,8 @@ type Renderer struct {
 
 // Write renders pages to w as a PDF file.
 func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.Cache, opts Options) error {
-	r := &Renderer{doc: pdf.NewDocument(), shaper: shaper, imgRefs: map[*images.Image]pdf.Ref{}, colorGlyphs: map[colorGlyphKey]*images.Image{},
+	r := &Renderer{doc: pdf.NewDocument(), shaper: shaper, imgRefs: map[*images.Image]pdf.Ref{},
+		imgRatio: map[*images.Image]float64{}, imgInterp: map[*images.Image]bool{}, colorGlyphs: map[colorGlyphKey]*images.Image{},
 		anchors: map[string]anchorPos{}, opts: opts, images: imgs, propagated: map[*layout.Box]bool{}}
 	r.fm = newFontManager(r.doc)
 	if opts.Tags {
@@ -184,6 +198,7 @@ func Write(w io.Writer, pages []*layout.Page, shaper *text.Shaper, imgs *images.
 			d["Annots"] = pageAnnots[i]
 		}
 	}
+	r.writeImages()
 	r.fm.finish(fontOptions{compress: opts.Compress, full: opts.FullFonts, hinting: opts.Hinting,
 		cidSet: opts.Version != "" && !pdf.VersionAtLeast(opts.Version, "1.5")})
 	kids := make(pdf.Array, len(r.pageRefs))
@@ -321,7 +336,8 @@ func (r *Renderer) infoDict() pdf.Dict {
 
 func (r *Renderer) dest(page int, x, y float64, pages []*layout.Page) pdf.Array {
 	h := pages[page].Height
-	return pdf.Array{r.pageRefs[page], pdf.Name("XYZ"), x * 0.75, (h - y) * 0.75, 0}
+	k := r.scale()
+	return pdf.Array{r.pageRefs[page], pdf.Name("XYZ"), x * k, (h - y) * k, 0}
 }
 
 // ---------------------------------------------------------------- navigation
@@ -512,8 +528,9 @@ func (r *Renderer) drawPage(pi int, p *layout.Page, parent pdf.Ref) {
 	cv := &canvas{r: r, c: pdf.NewContent(r.opts.Compress), fonts: pdf.Dict{}, xobjects: pdf.Dict{},
 		states: pdf.Dict{}, shadings: pdf.Dict{}, patterns: pdf.Dict{}, stateIDs: map[string]string{},
 		page: pi, height: p.Height}
-	wPt, hPt := p.Width*0.75, p.Height*0.75
-	cv.c.Transform(0.75, 0, 0, -0.75, 0, hPt)
+	k := r.scale()
+	wPt, hPt := p.Width*k, p.Height*k
+	cv.c.Transform(k, 0, 0, -k, 0, hPt)
 	page := p.Box
 	// Page background, then the root (canvas) background over the whole page.
 	full := rect{0, 0, p.Width, p.Height}
@@ -895,7 +912,7 @@ func (cv *canvas) addLink(b *layout.Box) {
 		return
 	}
 	cv.r.links = append(cv.r.links, pendingLink{
-		rect: [4]float64{x0 * 0.75, (cv.height - y1) * 0.75, x1 * 0.75, (cv.height - y0) * 0.75},
+		rect: [4]float64{x0 * cv.r.scale(), (cv.height - y1) * cv.r.scale(), x1 * cv.r.scale(), (cv.height - y0) * cv.r.scale()},
 		link: b.Link, page: cv.page, box: b,
 	})
 }

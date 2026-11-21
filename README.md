@@ -31,7 +31,7 @@ weasyprint --page-size "A5 landscape" flyer.html flyer.pdf
 cat doc.html | weasyprint -u ./assets/ - - > doc.pdf
 ```
 
-Options (mirroring WeasyPrint's CLI):
+Options (the same as WeasyPrint's CLI, plus `--page-size`):
 
 | Option | Meaning |
 | --- | --- |
@@ -41,9 +41,29 @@ Options (mirroring WeasyPrint's CLI):
 | `-e`, `--encoding ENC` | Input character encoding |
 | `-p`, `--presentational-hints` | Follow HTML presentational hints (`align`, `bgcolor`, `width`…) |
 | `--page-size SIZE` | Page size of all pages, overriding the document's CSS: a CSS `size` value such as `A4`, `A5 landscape`, `letter`, `210mm 297mm` (not in WeasyPrint, where `-s` with `@page { size: … }` does the same) |
+| `-a`, `--attachment FILE` | Attach a file to the PDF (repeatable) |
+| `--attachment-relationship REL` | Relationship of the attachment at the same position (`Source`, `Data`, `Alternative`, `Supplement`, `Unspecified`…), for PDF/A-3 |
+| `--pdf-variant VARIANT` | `pdf/a-1b`, `pdf/a-2b`, `pdf/a-3b`, `pdf/a-2u`, `pdf/a-3u`, `pdf/a-4u`, `pdf/a-1a`, `pdf/a-2a`, `pdf/a-3a`, `pdf/a-4e`, `pdf/a-4f`, `pdf/ua-1`, `pdf/ua-2`, `pdf/x-1a`, `pdf/x-3`, `pdf/x-4`, `pdf/x-5g` |
+| `--pdf-version VERSION` | PDF version (default 1.7, or the variant's) |
+| `--pdf-identifier ID` | PDF file identifier |
+| `--pdf-tags` | Tagged PDF, for accessibility |
+| `--pdf-forms` | Interactive form fields for inputs, selects, textareas and buttons |
+| `--xmp-metadata FILE` | XML added to the XMP metadata (repeatable) |
+| `--custom-metadata` | Store other `<meta>` elements in the PDF metadata |
+| `--output-intent INTENT` | `srgb`, `device-cmyk` or the name of an `@color-profile` rule |
+| `--optimize-images` | Accepted (images are always compressed with PNG predictors) |
+| `-j`, `--jpeg-quality Q` | Re-encode JPEG images with this quality (0–95) |
+| `-D`, `--dpi DPI` | Maximum resolution of embedded images |
+| `--full-fonts` | Embed whole fonts instead of subsets |
+| `--hinting` | Keep hinting in embedded fonts |
+| `-c`, `--cache-folder DIR` | Store downloaded resources for later renderings |
+| `-t`, `--timeout SECONDS` | Timeout of HTTP requests (default 10) |
+| `--allowed-protocols LIST` | Comma-separated URL schemes that may be fetched |
+| `--no-http-redirects` | Don't follow HTTP redirects |
+| `--fail-on-http-errors` | Abort on any HTTP error |
 | `--uncompressed-pdf` | Don't compress PDF streams |
-| `-v` / `-q` | Verbose warnings / quiet |
-| `--version` | Print the version |
+| `-v` / `-d` / `-q` | Verbose warnings / debug messages / quiet |
+| `-i`, `--info` / `--version` | Print system information / the version |
 
 ## Library
 
@@ -67,9 +87,17 @@ Other entry points: `HTMLFromString(source, baseURL)`, `HTMLFromBytes`,
 doesn't set (A4 otherwise); `weasyprint.PageSize("A5 landscape")` converts
 a CSS page size for it.
 `HTML.Render(opts)` returns a `*Document` with page sizes and metadata,
-which can then be written with `Document.WritePDF(w)`. A custom
-`URLFetcher` can be set on `HTML` to control how stylesheets, images and
-fonts are loaded.
+which can then be written with `Document.WritePDF(w)` (or
+`WritePDFWithOptions` with other PDF options).
+
+The PDF options of the command line are in `Options.PDFOptions`
+(embedded, so `opts.Variant = "pdf/a-3b"`, `opts.Tags = true`,
+`opts.Attachments = []weasyprint.Attachment{{URL: "data.xml",
+Relationship: "Data"}}`…), plus `Zoom`. A custom `URLFetcher` can be set
+on `HTML` to control how stylesheets, images and fonts are loaded;
+`weasyprint.NewURLFetcher(weasyprint.FetcherOptions{...})` returns the
+default fetcher with a timeout, allowed protocols, redirects, HTTP error
+handling and a cache folder.
 
 ## Paper size
 
@@ -166,7 +194,10 @@ the `footnote` counter, the `@footnote` area, `footnote-display`,
 CID-keyed CJK fonts) with `ToUnicode` maps for text extraction, JPEG
 pass-through, PNG/GIF with alpha, internal and external links,
 named destinations, bookmarks (`bookmark-level`, `bookmark-label`,
-`bookmark-state`), document information dictionary.
+`bookmark-state`), document information dictionary and XMP metadata,
+PDF/A, PDF/UA and PDF/X variants, tagged PDF, form fields, attachments
+(`<link rel=attachment>`, `<a rel=attachment>`, `--attachment`), output
+intents (`srgb` or `@color-profile`), compressed object streams.
 
 **Images**: PNG, JPEG, GIF and SVG (shapes, paths, text, gradients,
 `use`/`symbol`, nested `svg`, clip paths, transforms, `<style>`,
@@ -206,10 +237,10 @@ here:
 * Images: BMP, TIFF, WebP and the other formats of Pillow; SVG markers,
   masks, patterns and filters.
 * Paged media: `bleed` and crop/cross `marks`.
-* PDF: forms, attachments, PDF/A and PDF/UA variants, tagged PDF, XMP
-  and custom metadata, output intents, PDF version and identifier
-  options, image optimization, JPEG quality and DPI options, full fonts
-  with hinting.
+* PDF: the `debug` variant (link annotations on every id), colors in
+  CMYK and other color spaces (`device-cmyk()`, `color()` with
+  `@color-profile`), and lossless re-compression of JPEG images
+  (`--optimize-images`).
 
 Supported here but ignored by WeasyPrint (documents using them render
 differently): media features in `@media` (WeasyPrint only checks media

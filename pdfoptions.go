@@ -41,8 +41,9 @@ type PDFOptions struct {
 	OutputIntent string
 	// Attachments are files embedded in the PDF.
 	Attachments []Attachment
-	// OptimizeImages re-encodes embedded images losslessly when it makes
-	// them smaller.
+	// OptimizeImages is accepted for compatibility: images other than
+	// JPEG are always compressed with PNG predictors, and JPEG images are
+	// kept as they are (unless JPEGQuality or DPI is set).
 	OptimizeImages bool
 	// JPEGQuality (1 to 95) re-encodes images as JPEG with this quality;
 	// 0 keeps them.
@@ -53,6 +54,9 @@ type PDFOptions struct {
 	FullFonts bool
 	// Hinting keeps the hinting instructions of embedded fonts.
 	Hinting bool
+	// Zoom scales the pages in the PDF (1 by default). Like in
+	// WeasyPrint, physical CSS units are then "wrong".
+	Zoom float64
 }
 
 // Attachment is a file embedded in the PDF.
@@ -143,6 +147,7 @@ func (d *Document) pdfDrawOptions(o *PDFOptions) (draw.Options, error) {
 		DPI:            o.DPI,
 		FullFonts:      o.FullFonts,
 		Hinting:        o.Hinting,
+		Zoom:           o.Zoom,
 	}
 	if o.Identifier != "" {
 		do.Identifier = []byte(o.Identifier)

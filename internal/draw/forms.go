@@ -57,18 +57,18 @@ func formOf(n *html.Node) *html.Node {
 }
 
 // collectInputs returns the form inputs of a page in tree order.
-func collectInputs(b *layout.Box, height float64, out *[]formInput) {
+func collectInputs(b *layout.Box, height, k float64, out *[]formInput) {
 	if isFormInput(b) {
 		x0, y0 := b.ContentX(), b.ContentY()
 		x1, y1 := x0+b.W, y0+b.H
 		*out = append(*out, formInput{b, formOf(b.Element),
-			[]float64{x0 * 0.75, (height - y0) * 0.75, x1 * 0.75, (height - y1) * 0.75}})
+			[]float64{x0 * k, (height - y0) * k, x1 * k, (height - y1) * k}})
 	}
 	if b.Marker != nil {
-		collectInputs(b.Marker, height, out)
+		collectInputs(b.Marker, height, k, out)
 	}
 	for _, ch := range b.Children {
-		collectInputs(ch, height, out)
+		collectInputs(ch, height, k, out)
 	}
 }
 
@@ -114,7 +114,7 @@ func humanName(form, element *html.Node, name string) string {
 // addForms adds the form fields of a page.
 func (r *Renderer) addForms(pi int, p *layout.Page, catalog pdf.Dict, pageAnnots *pdf.Array) {
 	var inputs []formInput
-	collectInputs(p.Box, p.Height, &inputs)
+	collectInputs(p.Box, p.Height, r.scale(), &inputs)
 	if len(inputs) == 0 {
 		return
 	}
@@ -139,7 +139,7 @@ func (r *Renderer) addForms(pi int, p *layout.Page, catalog pdf.Dict, pageAnnots
 			name = fmt.Sprintf("unknown-%d-%d", pageRef, i)
 		}
 		human := humanName(in.form, el, name)
-		fontSize := style.FontSize() * 0.75
+		fontSize := style.FontSize() * r.scale()
 		col := style.Color(css.PColor)
 		colorOps := fmt.Sprintf("%s %s %s rg", pdf.FormatNumber(col.R), pdf.FormatNumber(col.G), pdf.FormatNumber(col.B))
 		field := pdf.Dict{"Type": pdf.Name("Annot"), "Subtype": pdf.Name("Widget"), "Rect": in.rect,
