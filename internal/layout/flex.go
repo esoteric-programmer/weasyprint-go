@@ -526,8 +526,13 @@ func (c *Context) layoutFlexItem(orig *Box, w, h float64, cbi cbInfo) *Box {
 			}
 		}
 		return b
-	case KFlex:
-		res := c.flexLayout(b, math.Inf(-1), nil, nil, cbi, true, &absList{}, &absList{})
+	case KFlex, KGrid:
+		var res blockResult
+		if b.Kind == KGrid {
+			res = c.gridLayout(b, math.Inf(-1), nil, nil, cbi, true, &absList{}, &absList{})
+		} else {
+			res = c.flexLayout(b, math.Inf(-1), nil, nil, cbi, true, &absList{}, &absList{})
+		}
 		if res.box != nil {
 			return res.box
 		}

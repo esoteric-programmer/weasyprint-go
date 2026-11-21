@@ -578,7 +578,7 @@ func (cv *canvas) withClip(b *layout.Box, skip bool, f func()) {
 func isBlockLike(b *layout.Box) bool {
 	switch b.Kind {
 	case layout.KBlock, layout.KTableWrapper, layout.KTable, layout.KRowGroup, layout.KRow,
-		layout.KCell, layout.KCaption, layout.KFlex, layout.KMargin, layout.KColGroup:
+		layout.KCell, layout.KCaption, layout.KFlex, layout.KMargin, layout.KColGroup, layout.KGrid:
 		return true
 	case layout.KReplaced:
 		return !b.IsInline

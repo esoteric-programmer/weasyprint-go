@@ -91,6 +91,8 @@ func (c *Context) blockLevelLayout(box *Box, bottomSpace float64, skip Skip, cb 
 		return blockResult{box: nb, next: nextPage{Break: "any"}}
 	case KFlex:
 		return c.flexLayout(box, bottomSpace, skip, cb, cbi, pageIsEmpty, abs, fixed)
+	case KGrid:
+		return c.gridLayout(box, bottomSpace, skip, cb, cbi, pageIsEmpty, abs, fixed)
 	}
 	return c.blockBoxLayout(box, bottomSpace, skip, cb, cbi, pageIsEmpty, abs, fixed, adjoining, discard)
 }

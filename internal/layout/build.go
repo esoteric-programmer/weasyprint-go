@@ -316,6 +316,8 @@ func displayKind(d string) Kind {
 		return KCaption
 	case "flex", "inline-flex":
 		return KFlex
+	case "grid", "inline-grid":
+		return KGrid
 	}
 	return KBlock
 }
@@ -330,10 +332,6 @@ func (b *Builder) newBox(e *html.Node, style *css.Style, pseudo string) *Box {
 		box.IsHeader = true
 	case "table-footer-group":
 		box.IsFooter = true
-	}
-	if d == "inline-grid" {
-		box.Kind = KInlineBlock
-		box.IsInline = false
 	}
 	return box
 }

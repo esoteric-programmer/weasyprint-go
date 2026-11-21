@@ -1201,11 +1201,16 @@ func (c *Context) layoutAtomic(orig *Box, cb *Box, cbi cbInfo) *Box {
 			nb.Baseline = y - nb.Y
 		}
 		return nb
-	case KFlex:
+	case KFlex, KGrid:
 		if math.IsNaN(box.W) {
 			box.W = c.shrinkToFit(box, cbi.W-box.ML-box.MR-box.PL-box.PR-box.BL-box.BR)
 		}
-		res := c.flexLayout(box, math.Inf(-1), nil, cb, cbi, true, &absList{}, &absList{})
+		var res blockResult
+		if box.Kind == KGrid {
+			res = c.gridLayout(box, math.Inf(-1), nil, cb, cbi, true, &absList{}, &absList{})
+		} else {
+			res = c.flexLayout(box, math.Inf(-1), nil, cb, cbi, true, &absList{}, &absList{})
+		}
 		nb := res.box
 		if nb == nil {
 			nb = box

@@ -45,6 +45,8 @@ func (c *Context) contentWidth(box *Box, outer, minimum bool) float64 {
 		return c.inlineWidth(lw, minimum)
 	case KFlex:
 		return c.flexContentWidth(box, outer, minimum)
+	case KGrid:
+		return c.gridContentWidth(box, outer, minimum)
 	case KText:
 		lw := &Box{Kind: KLine, Style: box.Style, Children: []*Box{box}}
 		return c.inlineWidth(lw, minimum)

@@ -19,7 +19,7 @@ func (b *Builder) fixup(box *Box) *Box {
 		b.fixupRowGroup(box)
 	case KRow:
 		b.fixupRow(box)
-	case KFlex:
+	case KFlex, KGrid:
 		b.fixupFlex(box)
 	case KInline:
 		// Handled by the parent block container.

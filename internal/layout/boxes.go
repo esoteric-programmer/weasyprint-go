@@ -31,6 +31,7 @@ const (
 	KPage
 	KMargin
 	KLeader
+	KGrid
 )
 
 var kindNames = map[Kind]string{
@@ -38,7 +39,7 @@ var kindNames = map[Kind]string{
 	KLine: "Line", KReplaced: "Replaced", KTable: "Table", KTableWrapper: "TableWrapper",
 	KRowGroup: "RowGroup", KRow: "Row", KCell: "Cell", KColGroup: "ColGroup",
 	KCol: "Col", KCaption: "Caption", KFlex: "Flex", KPage: "Page", KMargin: "Margin",
-	KLeader: "Leader",
+	KLeader: "Leader", KGrid: "Grid",
 }
 
 func (k Kind) String() string { return kindNames[k] }
@@ -198,7 +199,7 @@ func (b *Box) Translate(dx, dy float64) {
 // context as a block-level box.
 func (b *Box) IsBlockLevel() bool {
 	switch b.Kind {
-	case KBlock, KTableWrapper, KFlex, KReplaced, KTable:
+	case KBlock, KTableWrapper, KFlex, KReplaced, KTable, KGrid:
 		return !b.IsInline
 	case KCaption, KRowGroup, KRow, KCell, KColGroup, KCol:
 		return false
@@ -211,7 +212,7 @@ func (b *Box) IsInlineLevel() bool {
 	switch b.Kind {
 	case KInline, KText, KInlineBlock, KLeader:
 		return true
-	case KReplaced, KTableWrapper, KFlex, KTable:
+	case KReplaced, KTableWrapper, KFlex, KTable, KGrid:
 		return b.IsInline
 	}
 	return false
@@ -222,7 +223,7 @@ func (b *Box) IsAtomicInline() bool {
 	switch b.Kind {
 	case KInlineBlock:
 		return true
-	case KReplaced, KTableWrapper, KFlex, KTable:
+	case KReplaced, KTableWrapper, KFlex, KTable, KGrid:
 		return b.IsInline
 	}
 	return false
@@ -274,7 +275,7 @@ func (b *Box) EstablishesBFC() bool {
 		return false
 	}
 	switch b.Kind {
-	case KInlineBlock, KCell, KCaption, KFlex, KTableWrapper, KTable, KPage, KMargin:
+	case KInlineBlock, KCell, KCaption, KFlex, KTableWrapper, KTable, KPage, KMargin, KGrid:
 		return true
 	case KBlock:
 		if b.Style.IsFloat() || b.Style.IsAbsolute() || b.Style.Kw(css.POverflow) != "visible" || b.Style.Display() == "flow-root" {
