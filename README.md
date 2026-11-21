@@ -112,8 +112,10 @@ dates, language), presentational hints (opt-in).
 `:nth-child(An+B of S)`, `:not()`, `:is()`, `:where()`, `:has()`,
 `:lang()`), `::before`, `::after`, `::marker`, `!important`, origins and
 specificity, custom properties and `var()`, `calc()`/`min()`/`max()`/
-`clamp()`, `@media`, `@import`, `@supports`, `@layer` (flattened),
-`@font-face`, `@counter-style`, `@page`.
+`clamp()` (also mixing lengths and percentages), CSS nesting (`&`),
+`@media`, `@import` (with `layer()`), `@supports`, `@layer` (ordered like
+WeasyPrint), `@font-face`, `@counter-style`, `@page`. As in WeasyPrint,
+`@container` and `@scope` rules are ignored.
 
 **Values**: all absolute and font-relative units, viewport units, colors
 (named, hex, `rgb()`, `hsl()`, `hwb()`, `currentColor`, system colors),
@@ -143,7 +145,8 @@ linear/radial/repeating gradients, `attr()`, counters and
 * Grid (template rows/columns with `fr`, `minmax()`, `repeat()`,
   `auto-fill`, named areas, line placement and spans, auto-placement,
   gaps, alignment).
-* Multi-column layout with balancing and column rules.
+* Multi-column layout with balancing, column rules and
+  `column-span: all`.
 * `transform` (2D) and `opacity`.
 
 **Paged media**: `@page` with `size` (named sizes, orientation),
@@ -164,7 +167,9 @@ named destinations, bookmarks (`bookmark-level`, `bookmark-label`,
 `bookmark-state`), document information dictionary.
 
 **Images**: PNG, JPEG, GIF and SVG (shapes, paths, text, gradients,
-`use`/`symbol`, nested `svg`, clip paths, transforms, `<style>`), with
+`use`/`symbol`, nested `svg`, clip paths, transforms, `<style>`,
+`<image>`, `tspan` with `x`/`y`/`dx`/`dy` lists and per-chunk
+`text-anchor`), with
 `object-fit`/`object-position` and `image-resolution`.
 
 **Fonts**: system fonts are discovered in the usual directories of Linux,
@@ -179,20 +184,41 @@ drawn as images. As in WeasyPrint, bold and italic are not synthesized.
 
 ## Differences from WeasyPrint and limitations
 
-* Only Arabic gets complex shaping; Indic and other scripts needing
-  HarfBuzz's script shapers (reordering, mark positioning) are shown
-  with their default glyphs. Latin, Greek, Cyrillic, CJK, Hebrew and
-  Arabic work well.
-* OpenType layout covers kerning, standard and required ligatures,
-  Arabic joining forms and small caps, not other features (e.g.
-  contextual alternates).
-* Nonstandard hyphenation patterns that change letters (such as the
-  old German "ck" → "k-k") are not used.
-* WOFF2 web fonts are skipped (they require Brotli); variable fonts use
-  their default instance.
-* Not implemented yet: `::first-line` and
-  `::first-letter`, PDF forms, attachments, PDF/A and PDF/UA variants,
-  bleed and crop marks.
+Supported by WeasyPrint (through Pango, HarfBuzz and Pillow) but not
+here:
+
+* Text: complex shaping of Indic and other scripts (only Arabic gets
+  joining forms), OpenType features beyond kerning, standard and
+  required ligatures, Arabic forms and small caps (`font-feature-settings`,
+  `font-variant-numeric`/`-position`/`-ligatures`/`-east-asian`/
+  `-alternates`, contextual alternates, mark positioning),
+  `font-variation-settings` (variable fonts use their default instance),
+  WOFF2 fonts (they require Brotli), nonstandard hyphenation patterns
+  that change letters (such as the old German "ck" → "k-k").
+* CSS: `::first-line`, `::first-letter`, `line-clamp`/`max-lines`/
+  `continue: discard`, `border-image`, logical properties
+  (`margin-block`, `inline-size`, `inset-inline`...), `clip`,
+  `image-orientation`, `margin-break`, `place-self`,
+  `font-language-override`, `subgrid`, `lab()`/`lch()`/`oklab()`/
+  `oklch()`/`color()`/`light-dark()` colors.
+* Images: BMP, TIFF, WebP and the other formats of Pillow; SVG markers,
+  masks, patterns and filters.
+* Paged media: `bleed` and crop/cross `marks`.
+* PDF: forms, attachments, PDF/A and PDF/UA variants, tagged PDF, XMP
+  and custom metadata, output intents, PDF version and identifier
+  options, image optimization, JPEG quality and DPI options, full fonts
+  with hinting.
+
+Supported here but ignored by WeasyPrint (documents using them render
+differently): media features in `@media` (WeasyPrint only checks media
+types), `@supports`, `display: contents`, `text-shadow`, gradients with
+two positions per color stop, `fit-content`/`min-content`/`max-content`
+widths, `overflow: clip`, `word-break: keep-all`,
+`white-space: break-spaces`, `unicode-bidi`, `place-items`/
+`place-content`, grid templates with named areas, the `:required`,
+`:optional`, `:read-only`, `:read-write`, `:placeholder-shown`,
+`:default` and `:indeterminate` selectors, and the `--page-size`
+option.
 
 The output was compared with WeasyPrint 70 page by page. The remaining
 differences come from WeasyPrint bugs that are intentionally not
@@ -221,6 +247,8 @@ reproduced:
 * Files without a charset are decoded as Windows-1252 even when they are
   valid UTF-8, and inline SVG text does not inherit fonts from the
   document.
+* With `word-break: break-all`, lines are broken as if a hyphen was
+  added at the end (Pango reserves its width) although none is drawn.
 
 ## Architecture
 
