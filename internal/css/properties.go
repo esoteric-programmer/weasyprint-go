@@ -1048,6 +1048,20 @@ func parseFontFeatures(ts []Token, _ *ParseCtx) Value {
 	return out
 }
 
+func parseHyphenateLimitLines(ts []Token, _ *ParseCtx) Value {
+	t, ok := single(RemoveWS(ts))
+	if !ok {
+		return nil
+	}
+	if t.IsIdent("no-limit") {
+		return Keyword("no-limit")
+	}
+	if t.Type == TNumber && t.IsInt && t.Num >= 0 {
+		return Number(t.Num)
+	}
+	return nil
+}
+
 func parseTabSize(ts []Token, _ *ParseCtx) Value {
 	if t, ok := single(ts); ok {
 		if t.Type == TNumber && t.Num >= 0 {
@@ -1216,6 +1230,9 @@ var (
 	PTabSize                 = def("tab-size", true, Number(8), parseTabSize)
 	PHyphenateLimitZone      = def("hyphenate-limit-zone", true, Px(0), lengthKw(false, true))
 	PHyphenateLimitChars     = def("hyphenate-limit-chars", true, LimitChars{-1, -1, -1}, parseHyphenateLimitChars)
+	PHyphenateLimitLines     = def("hyphenate-limit-lines", true, Keyword("no-limit"), parseHyphenateLimitLines)
+	PTextWrapMode            = def("text-wrap-mode", true, Keyword("wrap"), kw("wrap", "nowrap"))
+	PTextWrapStyle           = def("text-wrap-style", true, Keyword("auto"), kw("auto", "balance", "stable", "pretty"))
 	PLang                    = def("lang", true, Keyword("none"), func(ts []Token, _ *ParseCtx) Value {
 		if t, ok := single(ts); ok && t.Type == TString {
 			return Str(t.Value)

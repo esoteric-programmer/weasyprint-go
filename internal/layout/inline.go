@@ -281,6 +281,12 @@ type lineIterator struct {
 	first       bool
 	abs, fixed  *absList
 	atomics     map[int]*Box
+
+	// text-wrap-style: pretty and balance.
+	collect  *[]breakCand // set while measuring candidate breaks
+	hyphRun  int          // consecutive hyphenated lines so far
+	prevFit  int          // fitness class of the previous line
+	balanced float64      // line width for balance (0: not computed)
 }
 
 func (c *Context) newLineIterator(line *Box, cb *Box, cbi cbInfo, y, bottomSpace float64, skip Skip, abs, fixed *absList) *lineIterator {
@@ -358,7 +364,7 @@ func (it *lineIterator) nextLine() (*Box, Skip, bool) {
 		x0, y0, avail := it.c.avoidCollisions(probe, it.cbi, it.cb, false)
 		y = y0
 		var newFloat bool
-		end, forced, waiting, newFloat = it.breakLine(start, x0+textIndent, x0+avail, y, placedFloats)
+		end, forced, waiting, newFloat = it.chooseBreak(start, x0, textIndent, avail, y, placedFloats)
 		if newFloat {
 			continue
 		}
@@ -560,6 +566,13 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 	hasContent := false
 	var waiting []int
 	cbW := it.cbi.W
+	// Width without trailing spaces and space counts, for candidates.
+	xContent, spaces, trailing := x, 0, 0
+	record := func(pos linePos, hyphen bool, w float64) {
+		if it.collect != nil {
+			*it.collect = append(*it.collect, breakCand{pos: pos, hyphen: hyphen, width: w - lineStartX, spaces: spaces - trailing})
+		}
+	}
 	overflowWrap := it.src.Style.Kw(css.POverflowWrap)
 	breakWord := overflowWrap == "break-word" || overflowWrap == "anywhere" || it.src.Style.Kw(css.PWordBreak) == "break-word"
 	// Inline boxes open at the start of the line that started earlier have
@@ -573,6 +586,9 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 			x += inlineStartEdge(item.box, cbW)
 		case itClose:
 			x += inlineEndEdge(item.box, cbW)
+			if trailing == 0 {
+				xContent = x
+			}
 		case itText:
 			runes := item.shaped.Runes
 			for i := p.r; i < len(runes); i++ {
@@ -587,6 +603,7 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 							bp = it.backOverOpens(bp, start)
 						}
 						last = &cand{bp, false}
+						record(bp, false, xContent)
 					} else if b == text.BreakHyphen && i > 0 {
 						// The hyphen must fit too; when nothing else
 						// does, the shortest part is used.
@@ -598,6 +615,7 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 						}
 						if ok && (x+it.hyphenWidth(item) <= maxX+1e-6 || last == nil) {
 							last = &cand{linePos{p.item, i}, true}
+							record(linePos{p.item, i}, true, x+it.hyphenWidth(item))
 						}
 					}
 				}
@@ -643,6 +661,13 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 				if !isSpace || item.ws == "pre" || item.ws == "pre-wrap" || item.ws == "break-spaces" {
 					hasContent = true
 				}
+				if isSpace {
+					spaces++
+					trailing++
+				} else {
+					xContent = x
+					trailing = 0
+				}
 				if last != nil && last.hyphen && x > maxX+1e-6 {
 					// nothing
 				}
@@ -654,6 +679,7 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 			b := item.breaks[0]
 			if !firstPos && hasContent && (b == text.BreakAllowed || b == text.BreakHyphen) {
 				last = &cand{it.backOverOpens(linePos{p.item, 0}, start), false}
+				record(last.pos, false, xContent)
 			}
 			firstPos = false
 			ab := it.atomicBox(p.item)
@@ -662,8 +688,12 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 				return last.pos, false, waiting, false
 			}
 			x += w
+			xContent, trailing = x, 0
 			hasContent = true
 		case itFloat:
+			if it.collect != nil {
+				break
+			}
 			if _, ok := placed[p.item]; !ok {
 				fb := item.box.Copy()
 				fb.X = it.cb.ContentX()
@@ -830,7 +860,8 @@ func (it *lineIterator) buildLine(start, end linePos, x0, textIndent, avail, y f
 	}
 	if (align == "justify") && !last {
 		extra := avail - textIndent - width
-		if extra > 0 {
+		// text-wrap-style: pretty may shrink spaces (see pretty.go).
+		if extra > 0 || (extra < -1e-6 && style.Kw(css.PTextWrapStyle) == "pretty") {
 			if n := countSpaces(line); n > 0 {
 				addJustification(line, extra/float64(n))
 				width = positionInline(line, x0+textIndent)

@@ -114,7 +114,18 @@ func (s *Style) RunningName() string {
 }
 
 // WhiteSpace returns the white-space keyword.
-func (s *Style) WhiteSpace() string { return s.Kw(PWhiteSpace) }
+func (s *Style) WhiteSpace() string {
+	ws := s.Kw(PWhiteSpace)
+	if s.Kw(PTextWrapMode) == "nowrap" {
+		switch ws {
+		case "normal":
+			return "nowrap"
+		case "pre-wrap", "break-spaces":
+			return "pre"
+		}
+	}
+	return ws
+}
 
 // LineHeight returns the used line height for the style's font size.
 // For "normal", 1.2 is used unless metric is provided.

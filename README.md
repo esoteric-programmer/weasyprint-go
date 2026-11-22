@@ -305,6 +305,18 @@ functions of `font-variant-alternates` (`stylistic()`, `styleset()`,
 `character-variant()`, `swash()`, `ornaments()`, `annotation()`) with
 `@font-feature-values`.
 
+`text-wrap-style: pretty` (and `text-wrap`, `text-wrap-mode`,
+`hyphenate-limit-lines`), ignored by WeasyPrint, breaks lines like TeX
+within a window of three lines: each possible break is rated by the
+stretching or shrinking of its spaces (justified lines may shrink them by
+up to a ninth of an em, ragged lines have a 2em flexible margin like
+`\raggedright`), with demerits for hyphens, consecutive hyphens, changes
+of tightness, a hyphen on the last line of a page and very short last
+lines. Lines that would be too loose are only used when nothing better
+fits, and then the usual break is taken: unlike TeX without `\sloppy`,
+text never runs out of its box. `text-wrap-style: balance` gives the
+lines of short blocks (up to 10 lines, e.g. headings) equal lengths.
+
 A combining mark drawn with another font than its base is placed on the
 base here, and a grapheme cluster (a letter and its marks, or a
 precomposed letter the preferred font can draw decomposed) is drawn with

@@ -357,6 +357,29 @@ func init() {
 	shorthand("page-break-before", []PropID{PBreakBefore}, legacyBreak(PBreakBefore, false))
 	shorthand("page-break-after", []PropID{PBreakAfter}, legacyBreak(PBreakAfter, false))
 	shorthand("page-break-inside", []PropID{PBreakInside}, legacyBreak(PBreakInside, true))
+	shorthand("text-wrap", []PropID{PTextWrapMode, PTextWrapStyle}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
+		ts = RemoveWS(ts)
+		var mode, style Value
+		for _, t := range ts {
+			if v := Props[PTextWrapMode].Parse([]Token{t}, ctx); v != nil && mode == nil {
+				mode = v
+			} else if v := Props[PTextWrapStyle].Parse([]Token{t}, ctx); v != nil && style == nil {
+				style = v
+			} else {
+				return nil, false
+			}
+		}
+		if len(ts) == 0 {
+			return nil, false
+		}
+		if mode == nil {
+			mode = Keyword("wrap")
+		}
+		if style == nil {
+			style = Keyword("auto")
+		}
+		return []PropValue{{PTextWrapMode, mode}, {PTextWrapStyle, style}}, true
+	})
 	shorthand("font-variant", []PropID{PFontVariantLigatures, PFontVariantCaps, PFontVariantAlternates, PFontVariantNumeric, PFontVariantEastAsian, PFontVariantPosition}, expandFontVariant)
 	shorthand("font", []PropID{PFontStyle, PFontVariantCaps, PFontWeight, PFontStretch, PFontSize, PLineHeight, PFontFamily}, expandFont)
 	shorthand("flex", []PropID{PFlexGrow, PFlexShrink, PFlexBasis}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
