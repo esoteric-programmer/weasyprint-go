@@ -1,6 +1,8 @@
 package images
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/md5"
 	"encoding/hex"
 	"image"
@@ -61,5 +63,16 @@ func TestDecodeFormats(t *testing.T) {
 		if got := hex.EncodeToString(h.Sum(nil)); got != c.md5 {
 			t.Errorf("%s: pixels differ from Pillow's", c.file)
 		}
+	}
+}
+
+func TestSVGZ(t *testing.T) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10"/></svg>`))
+	zw.Close()
+	im, err := Decode(buf.Bytes(), "image/svg+xml", "a.svgz")
+	if err != nil || im.SVG == nil {
+		t.Fatalf("SVGZ not decoded: %v", err)
 	}
 }

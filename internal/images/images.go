@@ -3,6 +3,7 @@ package images
 
 import (
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"image"
 	"image/color"
@@ -10,6 +11,7 @@ import (
 	_ "image/gif" // register GIF
 	"image/jpeg"
 	_ "image/png" // register PNG
+	"io"
 	"strings"
 	"sync"
 
@@ -70,6 +72,18 @@ func (im *Image) Ratio() float64 {
 
 // Decode decodes image data.
 func Decode(data []byte, mimeType, url string) (*Image, error) {
+	if hasPrefix(data, "\x1f\x8b") {
+		// Gzip-compressed data, as in SVGZ files.
+		zr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		plain, err := io.ReadAll(io.LimitReader(zr, 256<<20))
+		if err != nil {
+			return nil, err
+		}
+		return Decode(plain, mimeType, url)
+	}
 	trimmed := bytes.TrimSpace(data)
 	if strings.Contains(mimeType, "svg") || bytes.HasPrefix(trimmed, []byte("<svg")) || (bytes.HasPrefix(trimmed, []byte("<?xml")) && bytes.Contains(data[:min(len(data), 1024)], []byte("<svg"))) {
 		svg, err := ParseSVG(data, url)
