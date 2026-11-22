@@ -50,3 +50,27 @@ func TestFontRelativeUnits(t *testing.T) {
 		}
 	}
 }
+
+func TestLogicalBorders(t *testing.T) {
+	doc, _ := render(t, `<style>div{height:1px}</style>
+<div style="border-inline-start:5px solid;border-block-end:3px solid red"></div>
+<div dir=rtl style="border-inline-start-width:4px;border-inline-start-style:dashed"></div>
+<div style="--s:solid;border-style:var(--s);border-width:2px"></div>`, nil)
+	var got [][4]float64
+	for _, p := range doc.pages {
+		p.Box.Descendants(func(b *layout.Box) {
+			if b.Kind == layout.KBlock && b.Element != nil && b.Element.Tag == "div" {
+				got = append(got, [4]float64{b.BT, b.BR, b.BB, b.BL})
+			}
+		})
+	}
+	want := [][4]float64{{0, 0, 3, 5}, {0, 4, 0, 0}, {2, 2, 2, 2}}
+	if len(got) != len(want) {
+		t.Fatalf("got %d divs", len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("div %d: borders %v, want %v", i, got[i], want[i])
+		}
+	}
+}

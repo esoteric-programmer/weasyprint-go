@@ -879,6 +879,9 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 	ctx.lhParent = true
 	computeProp(PLineHeight)
 	ctx.lhParent = false
+	for _, id := range []PropID{PBorderTopStyle, PBorderRightStyle, PBorderBottomStyle, PBorderLeftStyle, POutlineStyle, PColumnRuleStyle} {
+		computeProp(id)
+	}
 
 	for i := range Props {
 		if !done[i] {
@@ -996,7 +999,9 @@ func (ctx *computeCtx) computeValue(id PropID, v Value, c *cascaded) Value {
 		case PColumnRuleWidth:
 			styleID = PColumnRuleStyle
 		}
-		st, _ := ctx.resolveKeyword(styleID, c)
+		// The styles are computed first (with logical properties and
+		// variables applied).
+		st, _ := ctx.style.vals[styleID].(Keyword)
 		if st == "none" || st == "hidden" {
 			return Px(0)
 		}
@@ -1149,28 +1154,6 @@ func unescapeFragment(s string) string {
 		b = append(b, s[i])
 	}
 	return string(b)
-}
-
-func (ctx *computeCtx) resolveKeyword(id PropID, c *cascaded) (string, bool) {
-	v, ok := c.vals[id]
-	if !ok {
-		if k, ok := Props[id].Initial.(Keyword); ok {
-			return string(k), true
-		}
-		return "", false
-	}
-	switch w := v.(type) {
-	case Keyword:
-		return string(w), true
-	case CSSWide:
-		if w == "inherit" && ctx.parent != nil {
-			return ctx.parent.Kw(id), true
-		}
-		if k, ok := Props[id].Initial.(Keyword); ok {
-			return string(k), true
-		}
-	}
-	return "", false
 }
 
 func (ctx *computeCtx) lineHeightPx(c *cascaded) float64 {

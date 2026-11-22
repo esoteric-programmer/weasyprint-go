@@ -405,6 +405,10 @@ reproduced:
 * `text-transform: capitalize` uppercases digraphs such as "ǆ" instead of
   using their titlecase form ("ǅ"; "ß" gives "Ss", not "SS").
 * The `cap` unit is the advance width of "O" instead of the cap height.
+* Glyph offsets (combining marks attached by GPOS, superscript
+  positioning) are converted from Pango units with a factor of 1/1000
+  instead of 1/1024, so marks are moved 2.4% too far from their pen
+  position (about 0.1pt for an accent at 18pt).
 * With emulated small caps, a glyph keeps the text of its first use in
   the PDF without ActualText, so the extracted text can have the wrong
   case ("CapS" for "Caps"); here, the glyphs stand for their capital and
