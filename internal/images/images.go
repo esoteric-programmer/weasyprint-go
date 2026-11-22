@@ -78,6 +78,25 @@ func Decode(data []byte, mimeType, url string) (*Image, error) {
 		}
 		return &Image{URL: url, SVG: svg}, nil
 	}
+	if !hasPrefix(data, "\xff\xd8") {
+		img, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			// Like Pillow, try the formats without signature when the
+			// signature matched by accident.
+			if img2, err2 := decodeSniffed(data); err2 == nil {
+				img, err = img2, nil
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		d, err := fromImage(img, url)
+		if err != nil {
+			return nil, err
+		}
+		d.exif = exifOrientation(data)
+		return d, nil
+	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
