@@ -221,6 +221,9 @@ func scanNumber(s string, i int) int {
 type PathSeg struct {
 	Op  byte
 	Pts []float64
+	// Join is true for the curves continuing an arc, whose start is not
+	// a vertex of the path (for markers).
+	Join bool
 }
 
 // ParsePath parses SVG path data into absolute M/L/C/Z segments.
@@ -294,7 +297,7 @@ func ParsePath(d string) []PathSeg {
 			}
 			cx, cy = ox+v[0], oy+v[1]
 			sx, sy = cx, cy
-			out = append(out, PathSeg{'M', []float64{cx, cy}})
+			out = append(out, PathSeg{Op: 'M', Pts: []float64{cx, cy}})
 			if cmd == 'M' {
 				cmd = 'L'
 			} else {
@@ -308,7 +311,7 @@ func ParsePath(d string) []PathSeg {
 				return out
 			}
 			cx, cy = ox+v[0], oy+v[1]
-			out = append(out, PathSeg{'L', []float64{cx, cy}})
+			out = append(out, PathSeg{Op: 'L', Pts: []float64{cx, cy}})
 		case 'H', 'h':
 			v, ok := readNums(1)
 			if !ok {
@@ -318,7 +321,7 @@ func ParsePath(d string) []PathSeg {
 			if !rel {
 				cx = v[0]
 			}
-			out = append(out, PathSeg{'L', []float64{cx, cy}})
+			out = append(out, PathSeg{Op: 'L', Pts: []float64{cx, cy}})
 		case 'V', 'v':
 			v, ok := readNums(1)
 			if !ok {
@@ -329,14 +332,14 @@ func ParsePath(d string) []PathSeg {
 			} else {
 				cy = v[0]
 			}
-			out = append(out, PathSeg{'L', []float64{cx, cy}})
+			out = append(out, PathSeg{Op: 'L', Pts: []float64{cx, cy}})
 		case 'C', 'c':
 			v, ok := readNums(6)
 			if !ok {
 				return out
 			}
 			x1, y1, x2, y2, x, y := ox+v[0], oy+v[1], ox+v[2], oy+v[3], ox+v[4], oy+v[5]
-			out = append(out, PathSeg{'C', []float64{x1, y1, x2, y2, x, y}})
+			out = append(out, PathSeg{Op: 'C', Pts: []float64{x1, y1, x2, y2, x, y}})
 			lastCtrl = [2]float64{x2, y2}
 			cx, cy = x, y
 			lastOp = 'C'
@@ -351,7 +354,7 @@ func ParsePath(d string) []PathSeg {
 				x1, y1 = 2*cx-lastCtrl[0], 2*cy-lastCtrl[1]
 			}
 			x2, y2, x, y := ox+v[0], oy+v[1], ox+v[2], oy+v[3]
-			out = append(out, PathSeg{'C', []float64{x1, y1, x2, y2, x, y}})
+			out = append(out, PathSeg{Op: 'C', Pts: []float64{x1, y1, x2, y2, x, y}})
 			lastCtrl = [2]float64{x2, y2}
 			cx, cy = x, y
 			lastOp = 'C'
@@ -388,7 +391,10 @@ func ParsePath(d string) []PathSeg {
 				return out
 			}
 			x, y := ox+v[5], oy+v[6]
-			out = append(out, arcToCubic(cx, cy, v[0], v[1], v[2], v[3] != 0, v[4] != 0, x, y)...)
+			for k, seg := range arcToCubic(cx, cy, v[0], v[1], v[2], v[3] != 0, v[4] != 0, x, y) {
+				seg.Join = k > 0
+				out = append(out, seg)
+			}
 			cx, cy = x, y
 		default:
 			return out
@@ -399,13 +405,13 @@ func ParsePath(d string) []PathSeg {
 }
 
 func quadToCubic(x0, y0, qx, qy, x, y float64) PathSeg {
-	return PathSeg{'C', []float64{x0 + 2.0/3*(qx-x0), y0 + 2.0/3*(qy-y0), x + 2.0/3*(qx-x), y + 2.0/3*(qy-y), x, y}}
+	return PathSeg{Op: 'C', Pts: []float64{x0 + 2.0/3*(qx-x0), y0 + 2.0/3*(qy-y0), x + 2.0/3*(qx-x), y + 2.0/3*(qy-y), x, y}}
 }
 
 // arcToCubic converts an elliptical arc to cubic Bezier segments.
 func arcToCubic(x1, y1, rx, ry, angle float64, large, sweep bool, x2, y2 float64) []PathSeg {
 	if rx == 0 || ry == 0 || (x1 == x2 && y1 == y2) {
-		return []PathSeg{{'L', []float64{x2, y2}}}
+		return []PathSeg{{Op: 'L', Pts: []float64{x2, y2}}}
 	}
 	rx, ry = math.Abs(rx), math.Abs(ry)
 	phi := angle * math.Pi / 180
@@ -462,7 +468,7 @@ func arcToCubic(x1, y1, rx, ry, angle float64, large, sweep bool, x2, y2 float64
 		if i == n-1 {
 			ex, ey = x2, y2
 		}
-		out = append(out, PathSeg{'C', []float64{ax, ay, bx, by, ex, ey}})
+		out = append(out, PathSeg{Op: 'C', Pts: []float64{ax, ay, bx, by, ex, ey}})
 		th += delta
 	}
 	return out

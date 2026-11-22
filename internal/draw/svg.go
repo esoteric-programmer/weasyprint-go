@@ -23,6 +23,7 @@ var svgInherited = map[string]bool{
 	"font-weight": true, "font-style": true, "text-anchor": true, "color": true,
 	"visibility": true, "letter-spacing": true, "word-spacing": true,
 	"dominant-baseline": true, "font": true, "text-decoration": true, "clip-rule": true,
+	"marker": true, "marker-start": true, "marker-mid": true, "marker-end": true,
 }
 
 var svgProps = map[string]bool{
@@ -34,6 +35,8 @@ var svgProps = map[string]bool{
 	"visibility": true, "display": true, "opacity": true, "stop-color": true,
 	"stop-opacity": true, "clip-path": true, "letter-spacing": true,
 	"dominant-baseline": true, "transform": false, "clip-rule": true,
+	"marker": true, "marker-start": true, "marker-mid": true, "marker-end": true,
+	"mask": true, "filter": true, "mask-type": true, "overflow": true,
 }
 
 type svgRenderer struct {
@@ -42,6 +45,8 @@ type svgRenderer struct {
 	depth int
 	vw    float64 // viewport width/height for percentages
 	vh    float64
+	// initial is the style the root element inherits from.
+	initial svgStyle
 }
 
 type svgStyle map[string]string
@@ -186,12 +191,19 @@ func (cv *canvas) drawSVG(s *images.SVG, x, y, w, h float64) {
 		sr.vw, sr.vh = s.Width, s.Height
 	}
 	root := svgStyle{"fill": "black", "stroke": "none", "font-size": "16", "font-family": "sans-serif"}
+	sr.initial = root
 	st := sr.style(s.Root, root)
 	sr.children(s.Root, st)
 	cv.c.Restore()
 }
 
 func (sr *svgRenderer) viewBoxTransform(vb [4]float64, w, h float64, par string) {
+	m := viewBoxMatrix(vb, w, h, par)
+	sr.cv.c.Transform(m[0], m[1], m[2], m[3], m[4], m[5])
+}
+
+// viewBoxMatrix returns the matrix mapping a viewBox to a w×h viewport.
+func viewBoxMatrix(vb [4]float64, w, h float64, par string) []float64 {
 	par = strings.TrimSpace(par)
 	sx, sy := w/vb[2], h/vb[3]
 	align := "xmidymid"
@@ -223,7 +235,7 @@ func (sr *svgRenderer) viewBoxTransform(vb [4]float64, w, h float64, par string)
 			ty += ey
 		}
 	}
-	sr.cv.c.Transform(sx, 0, 0, sy, tx, ty)
+	return []float64{sx, 0, 0, sy, tx, ty}
 }
 
 func (sr *svgRenderer) children(n *html.Node, st svgStyle) {
@@ -316,6 +328,12 @@ func (sr *svgRenderer) node(n *html.Node, parent svgStyle) {
 	if op <= 0 {
 		return
 	}
+	if f := st["filter"]; strings.HasPrefix(f, "url(") {
+		sr.applyFilter(f, n, st)
+	}
+	if m := st["mask"]; strings.HasPrefix(m, "url(") {
+		sr.applyMask(m, n, st)
+	}
 	grouped := op < 1
 	if grouped {
 		sr.cv.pushGroup()
@@ -337,6 +355,10 @@ func (sr *svgRenderer) node(n *html.Node, parent svgStyle) {
 	default:
 		if segs := sr.shape(n, st); segs != nil {
 			sr.paintPath(segs, st, tag != "line" && tag != "polyline" || true)
+			switch tag {
+			case "path", "line", "polyline", "polygon":
+				sr.drawMarkers(segs, st)
+			}
 		}
 	}
 	if grouped {
@@ -471,7 +493,9 @@ func (sr *svgRenderer) paintPath(segs []images.PathSeg, st svgStyle, fillable bo
 	fill := st["fill"]
 	evenOdd := st["fill-rule"] == "evenodd"
 	if fill != "none" && fillable {
-		if strings.HasPrefix(fill, "url(") {
+		if p := sr.ref(fill); p != nil && strings.ToLower(p.Tag) == "pattern" {
+			sr.paintPattern(p, segs, st, false)
+		} else if strings.HasPrefix(fill, "url(") {
 			sr.paintGradient(fill, segs, st, evenOdd, st.num("fill-opacity", 1))
 		} else if col, ok := sr.color(st, fill); ok {
 			col.A *= st.num("fill-opacity", 1)
@@ -488,11 +512,11 @@ func (sr *svgRenderer) paintPath(segs []images.PathSeg, st svgStyle, fillable bo
 	}
 	stroke := st["stroke"]
 	if stroke != "" && stroke != "none" {
-		width := 1.0
-		if v, ok := st["stroke-width"]; ok {
-			width = sr.length(st, v, math.Hypot(sr.vw, sr.vh)/math.Sqrt2)
+		if sr.strokeWidth(st) <= 0 {
+			return
 		}
-		if width <= 0 {
+		if p := sr.ref(stroke); p != nil && strings.ToLower(p.Tag) == "pattern" {
+			sr.paintPattern(p, segs, st, true)
 			return
 		}
 		col, ok := sr.color(st, stroke)
@@ -506,7 +530,26 @@ func (sr *svgRenderer) paintPath(segs []images.PathSeg, st svgStyle, fillable bo
 		col.A *= st.num("stroke-opacity", 1)
 		c.Save()
 		sr.cv.setStroke(col)
-		c.SetLineWidth(width)
+		sr.setStrokeParams(st)
+		addPath(c, segs)
+		c.Stroke()
+		c.Restore()
+	}
+}
+
+// strokeWidth returns the stroke width of a style.
+func (sr *svgRenderer) strokeWidth(st svgStyle) float64 {
+	if v, ok := st["stroke-width"]; ok {
+		return sr.length(st, v, math.Hypot(sr.vw, sr.vh)/math.Sqrt2)
+	}
+	return 1
+}
+
+// setStrokeParams sets the line width, caps, joins and dashes of a style.
+func (sr *svgRenderer) setStrokeParams(st svgStyle) {
+	c := sr.cv.c
+	{
+		c.SetLineWidth(sr.strokeWidth(st))
 		switch st["stroke-linecap"] {
 		case "round":
 			c.Op("1 J")
@@ -540,9 +583,6 @@ func (sr *svgRenderer) paintPath(segs []images.PathSeg, st svgStyle, fillable bo
 				c.SetDash(dashes, st.num("stroke-dashoffset", 0))
 			}
 		}
-		addPath(c, segs)
-		c.Stroke()
-		c.Restore()
 	}
 }
 
