@@ -1296,14 +1296,17 @@ var (
 	PLink          = def("link", false, Keyword("none"), parseLink)
 	PAnchor        = def("anchor", false, Keyword("none"), parseAnchor)
 
-	PTransform        = def("transform", false, Keyword("none"), parseTransform)
-	PTransformOrigin  = def("transform-origin", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
-	PObjectFit        = def("object-fit", false, Keyword("fill"), kw("fill", "contain", "cover", "none", "scale-down"))
-	PObjectPosition   = def("object-position", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
-	PImageRendering   = def("image-rendering", true, Keyword("auto"), kw("auto", "crisp-edges", "pixelated", "smooth", "high-quality"))
-	PColorScheme      = def("color-scheme", true, Keyword("normal"), parseColorScheme)
-	PImageOrientation = def("image-orientation", false, Keyword("from-image"), parseImageOrientation)
-	PImageResolution  = def("image-resolution", true, Number(1), func(ts []Token, _ *ParseCtx) Value {
+	PTransform            = def("transform", false, Keyword("none"), parseTransform)
+	PTransformOrigin      = def("transform-origin", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
+	PObjectFit            = def("object-fit", false, Keyword("fill"), kw("fill", "contain", "cover", "none", "scale-down"))
+	PObjectPosition       = def("object-position", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
+	PImageRendering       = def("image-rendering", true, Keyword("auto"), kw("auto", "crisp-edges", "pixelated", "smooth", "high-quality"))
+	PClip                 = def("clip", false, Keyword("auto"), parseClip)
+	PMarginBreak          = def("margin-break", false, Keyword("auto"), kw("auto", "keep", "discard"))
+	PFontLanguageOverride = def("font-language-override", true, Keyword("normal"), parseFontLanguageOverride)
+	PColorScheme          = def("color-scheme", true, Keyword("normal"), parseColorScheme)
+	PImageOrientation     = def("image-orientation", false, Keyword("from-image"), parseImageOrientation)
+	PImageResolution      = def("image-resolution", true, Number(1), func(ts []Token, _ *ParseCtx) Value {
 		if t, ok := single(ts); ok && t.Type == TDimension {
 			switch t.Value {
 			case "dppx", "x":
@@ -1396,4 +1399,61 @@ func parseImageOrientation(ts []Token, _ *ParseCtx) Value {
 		return nil
 	}
 	return o
+}
+
+// ClipRect is the rect() of the clip property; nil lengths are auto.
+type ClipRect [4]*Length
+
+func parseClip(ts []Token, _ *ParseCtx) Value {
+	t, ok := single(RemoveWS(ts))
+	if !ok {
+		return nil
+	}
+	if t.IsIdent("auto") {
+		return Keyword("auto")
+	}
+	if t.Type != TFunction || t.Value != "rect" {
+		return nil
+	}
+	var args [][]Token
+	if parts := SplitOnComma(t.Children); len(parts) == 4 {
+		args = parts
+	} else {
+		for _, a := range RemoveWS(t.Children) {
+			args = append(args, []Token{a})
+		}
+	}
+	if len(args) != 4 {
+		return nil
+	}
+	var r ClipRect
+	for i, a := range args {
+		a = RemoveWS(a)
+		if len(a) != 1 {
+			return nil
+		}
+		if a[0].IsIdent("auto") {
+			continue
+		}
+		l, ok := parseLengthToken(a[0], true, false)
+		if !ok {
+			return nil
+		}
+		r[i] = &l
+	}
+	return r
+}
+
+func parseFontLanguageOverride(ts []Token, _ *ParseCtx) Value {
+	t, ok := single(RemoveWS(ts))
+	if !ok {
+		return nil
+	}
+	switch {
+	case t.IsIdent("normal"):
+		return Keyword("normal")
+	case t.Type == TString:
+		return Str(t.Value)
+	}
+	return nil
 }

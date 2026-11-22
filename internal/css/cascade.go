@@ -119,10 +119,14 @@ type cascaded struct {
 	vals    map[PropID]Value
 	pending map[PropID]*Decl
 	custom  map[string][]Token
+	// rank orders the declarations of properties in the cascade, to
+	// choose between logical and physical properties.
+	rank    map[PropID]int
+	counter int
 }
 
 func newCascaded() *cascaded {
-	return &cascaded{vals: map[PropID]Value{}, pending: map[PropID]*Decl{}, custom: map[string][]Token{}}
+	return &cascaded{vals: map[PropID]Value{}, pending: map[PropID]*Decl{}, custom: map[string][]Token{}, rank: map[PropID]int{}}
 }
 
 func (c *cascaded) apply(entries []cascadeEntry) {
@@ -149,14 +153,18 @@ func (c *cascaded) apply(entries []cascadeEntry) {
 			case d.Custom != "":
 				c.custom[d.Custom] = d.Pending
 			case d.Pending != nil:
+				c.counter++
 				for _, id := range LonghandsOf(d.Name) {
 					delete(c.vals, id)
 					c.pending[id] = d
+					c.rank[id] = c.counter
 				}
 			default:
+				c.counter++
 				for _, pv := range d.Values {
 					c.vals[pv.ID] = pv.Value
 					delete(c.pending, pv.ID)
+					c.rank[pv.ID] = c.counter
 				}
 			}
 		}
@@ -678,6 +686,18 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 
 	resolve := func(id PropID) (Value, bool) {
 		v := specified(id)
+		// A logical property declared later replaces the physical one.
+		if m, ok := physicalLogical[id]; ok {
+			l := m[0]
+			if d, ok := s.vals[PDirection].(Keyword); ok && d == "rtl" {
+				l = m[1]
+			}
+			if l != 0 {
+				if lr, ok := c.rank[l]; ok && (v == nil || lr > c.rank[id]) {
+					v = specified(l)
+				}
+			}
+		}
 		def := Props[id]
 		if v == nil {
 			if def.Inherited && parent != nil {
@@ -715,6 +735,9 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 	if parent == nil && pseudo == "" {
 		ctx.rootFontSize = ctx.fontSize
 	}
+	// direction (for logical properties).
+	dv, _ := resolve(PDirection)
+	s.vals[PDirection] = dv
 	// color-scheme and color next (for light-dark() and currentcolor).
 	csv, _ := resolve(PColorScheme)
 	s.vals[PColorScheme] = csv
@@ -738,7 +761,7 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 
 	for i := range Props {
 		id := PropID(i)
-		if id == PFontSize || id == PColor || id == PColorScheme {
+		if id == PFontSize || id == PColor || id == PColorScheme || id == PDirection {
 			continue
 		}
 		v, needCompute := resolve(id)
@@ -855,6 +878,16 @@ func (ctx *computeCtx) computeValue(id PropID, v Value, c *cascaded) Value {
 	case PBorderTopColor, PBorderRightColor, PBorderBottomColor, PBorderLeftColor,
 		POutlineColor, PTextDecorationColor, PColumnRuleColor, PBackgroundColor:
 		return ctx.color(v)
+	case PClip:
+		if r, ok := v.(ClipRect); ok {
+			for i, l := range r {
+				if l != nil {
+					px := ctx.length(*l, ctx.fontSize)
+					r[i] = &px
+				}
+			}
+			return r
+		}
 	case PWordSpacing:
 		if k, ok := v.(Keyword); ok && k == "normal" {
 			return Px(0)

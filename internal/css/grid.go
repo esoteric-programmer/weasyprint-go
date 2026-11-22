@@ -106,6 +106,15 @@ func parseTrackList(ts []Token, _ *ParseCtx) Value {
 	if t, ok := single(ts); ok && t.IsIdent("none") {
 		return Keyword("none")
 	}
+	if len(ts) > 0 && ts[0].IsIdent("subgrid") {
+		// Accepted but laid out as none, like WeasyPrint.
+		for _, t := range ts[1:] {
+			if t.Type != TSquareBlock && t.Type != TWhitespace {
+				return nil
+			}
+		}
+		return Keyword("subgrid")
+	}
 	var out TrackList
 	for _, t := range ts {
 		if t.Type == TSquareBlock {

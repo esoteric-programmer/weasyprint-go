@@ -63,7 +63,7 @@ func (c *Context) flexLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 			box.W = c.shrinkToFit(box, cbi.W-box.ML-box.MR-box.PL-box.PR-box.BL-box.BR)
 		}
 	} else {
-		blockLevelWidth(box, cbi.W, true)
+		blockLevelWidth(box, cbi.W, true, cbi.Style)
 	}
 	box.MT, box.MB = nanTo0(box.MT), nanTo0(box.MB)
 	specH := specifiedHeight(box, cbi)
@@ -556,7 +556,7 @@ func (c *Context) flexAsBlock(box *Box, bottomSpace float64, skip Skip, cbi cbIn
 	resolvePercentages(b, cbi.W)
 	b.W = specifiedWidth(b, cbi.W)
 	b.H = math.NaN()
-	blockLevelWidth(b, cbi.W, true)
+	blockLevelWidth(b, cbi.W, true, cbi.Style)
 	b.MT, b.MB = nanTo0(b.MT), nanTo0(b.MB)
 	res := c.blockContainerLayout(b, bottomSpace, skip, pageIsEmpty, abs, fixed, nil, false, cbi)
 	if res.box != nil {

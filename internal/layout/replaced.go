@@ -106,7 +106,7 @@ func (c *Context) blockReplacedLayout(box *Box, cbi cbInfo) *Box {
 	c.replacedWidthHeight(box, cbi)
 	// Margins (CSS 2.1 §10.3.4).
 	w := box.W
-	blockLevelWidth(box, cbi.W, false)
+	blockLevelWidth(box, cbi.W, false, cbi.Style)
 	box.W = w
 	box.Baseline = box.MarginHeight()
 	return box

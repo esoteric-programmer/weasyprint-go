@@ -736,6 +736,31 @@ func (cv *canvas) paintUnit(b *layout.Box) {
 		return
 	}
 	tr := transformMatrix(b)
+	// clip of absolutely positioned boxes, like WeasyPrint (before
+	// opacity and transforms).
+	if r, ok := b.Style.Get(css.PClip).(css.ClipRect); ok {
+		if pos := b.Style.Kw(css.PPosition); pos == "absolute" || pos == "fixed" {
+			bx, by := b.BorderBoxX(), b.BorderBoxY()
+			bw, bh := b.BorderWidth(), b.BorderHeight()
+			top, right, bottom, left := 0.0, bw, bh, 0.0
+			if r[0] != nil {
+				top = r[0].V
+			}
+			if r[1] != nil {
+				right = r[1].V
+			}
+			if r[2] != nil {
+				bottom = r[2].V
+			}
+			if r[3] != nil {
+				left = r[3].V
+			}
+			cv.c.Save()
+			defer cv.c.Restore()
+			cv.c.Rect(bx+left, by+top, right-left, bottom-top)
+			cv.c.Clip()
+		}
+	}
 	grouped := op < 1
 	if grouped {
 		cv.pushGroup()

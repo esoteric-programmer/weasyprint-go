@@ -166,7 +166,7 @@ func (c *Context) gridLayout(box *Box, bottomSpace float64, skip Skip, cb *Box, 
 			box.W = c.shrinkToFit(box, cbi.W-box.ML-box.MR-box.PL-box.PR-box.BL-box.BR)
 		}
 	} else {
-		blockLevelWidth(box, cbi.W, true)
+		blockLevelWidth(box, cbi.W, true, cbi.Style)
 	}
 	box.MT, box.MB = nanTo0(box.MT), nanTo0(box.MB)
 	s := box.Style

@@ -2,6 +2,7 @@ package layout
 
 import (
 	"math"
+	"strings"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/hyphen"
@@ -19,7 +20,13 @@ func SpecFor(s *css.Style) text.Spec {
 		Size:     s.FontSize(),
 		RTL:      s.Kw(css.PDirection) == "rtl",
 	}
-	if l, ok := s.Get(css.PLang).(css.Str); ok {
+	if o, ok := s.Get(css.PFontLanguageOverride).(css.Str); ok {
+		// An OpenType language system tag.
+		spec.Lang = string(o)
+		if iso, ok := lstToISO[strings.ToLower(string(o))]; ok {
+			spec.Lang = iso
+		}
+	} else if l, ok := s.Get(css.PLang).(css.Str); ok {
 		spec.Lang = string(l)
 	}
 	if st := s.Kw(css.PFontStretch); st != "" {
@@ -1312,7 +1319,7 @@ func (c *Context) layoutAtomic(orig *Box, cb *Box, cbi cbInfo) *Box {
 		return box
 	case KTableWrapper:
 		c.tableWrapperWidth(box, cbi)
-		blockLevelWidth(box, cbi.W, false)
+		blockLevelWidth(box, cbi.W, false, cbi.Style)
 		if math.IsNaN(box.ML) {
 			box.ML = 0
 		}

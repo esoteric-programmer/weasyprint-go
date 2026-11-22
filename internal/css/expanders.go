@@ -130,12 +130,12 @@ func expandBorderSide(side string) expandFunc {
 }
 
 func init() {
-	shorthand("margin", sides("margin-", ""), expandFour(sides("margin-", ""), lengthKw(true, true, "auto")))
-	shorthand("padding", sides("padding-", ""), expandFour(sides("padding-", ""), lengthKw(false, true)))
-	shorthand("border-width", sides("border-", "-width"), expandFour(sides("border-", "-width"), parseBorderWidth))
-	shorthand("border-style", sides("border-", "-style"), expandFour(sides("border-", "-style"), kw(borderStyles...)))
-	shorthand("border-color", sides("border-", "-color"), expandFour(sides("border-", "-color"), parseColorProp))
-	shorthand("inset", []PropID{PTop, PRight, PBottom, PLeft}, expandFour([]PropID{PTop, PRight, PBottom, PLeft}, lengthKw(true, true, "auto")))
+	shorthand("margin", sides("margin-", ""), withLogical("margin", expandFour(sides("margin-", ""), lengthKw(true, true, "auto"))))
+	shorthand("padding", sides("padding-", ""), withLogical("padding", expandFour(sides("padding-", ""), lengthKw(false, true))))
+	shorthand("border-width", sides("border-", "-width"), withLogical("border-width", expandFour(sides("border-", "-width"), parseBorderWidth)))
+	shorthand("border-style", sides("border-", "-style"), withLogical("border-style", expandFour(sides("border-", "-style"), kw(borderStyles...))))
+	shorthand("border-color", sides("border-", "-color"), withLogical("border-color", expandFour(sides("border-", "-color"), parseColorProp)))
+	shorthand("inset", []PropID{PTop, PRight, PBottom, PLeft}, withLogical("inset", expandFour([]PropID{PTop, PRight, PBottom, PLeft}, lengthKw(true, true, "auto"))))
 	for _, side := range []string{"top", "right", "bottom", "left"} {
 		ids := []PropID{}
 		for _, p := range []string{"width", "style", "color"} {
@@ -462,6 +462,17 @@ func init() {
 			return nil, false
 		}
 		return []PropValue{{PAlignItems, a}, {PJustifyItems, j}}, true
+	})
+	shorthand("place-self", []PropID{PAlignSelf, PJustifySelf}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
+		if len(ts) < 1 || len(ts) > 2 {
+			return nil, false
+		}
+		a := Props[PAlignSelf].Parse(ts[:1], ctx)
+		j := Props[PJustifySelf].Parse(ts[len(ts)-1:], ctx)
+		if a == nil || j == nil {
+			return nil, false
+		}
+		return []PropValue{{PAlignSelf, a}, {PJustifySelf, j}}, true
 	})
 	shorthand("place-content", []PropID{PAlignContent, PJustifyContent}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
 		if len(ts) < 1 || len(ts) > 2 {
@@ -818,4 +829,15 @@ func LonghandsOf(name string) []PropID {
 		return []PropID{id}
 	}
 	return shorthands[name]
+}
+
+// withLogical accepts the "logical" keyword before four values, like
+// WeasyPrint.
+func withLogical(name string, f expandFunc) expandFunc {
+	return func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
+		if len(ts) > 0 && ts[0].Type == TIdent && ts[0].Value == "logical" {
+			return expandLogicalFour(name, ts[1:], ctx)
+		}
+		return f(ts, ctx)
+	}
 }

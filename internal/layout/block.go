@@ -63,7 +63,7 @@ func (c *Context) blockLevelLayout(box *Box, bottomSpace float64, skip Skip, cb 
 		if math.IsNaN(box.MB) {
 			box.MB = 0
 		}
-		if c.PageIndex > 0 && pageIsEmpty && (cbi.Root || len(adjoining) > 0) && !c.forcedBreak {
+		if c.PageIndex > 0 && pageIsEmpty && (cbi.Root || len(adjoining) > 0) && truncateMargin(box, c.forcedBreak) {
 			box.MT = 0
 		}
 		collapsed := collapseMargins(append(append([]float64{}, adjoining...), box.MT))
@@ -99,7 +99,7 @@ func (c *Context) blockBoxLayout(box *Box, bottomSpace float64, skip Skip, cb *B
 	if box.Kind == KTableWrapper {
 		c.tableWrapperWidth(box, cbi)
 	}
-	blockLevelWidth(box, cbi.W, true)
+	blockLevelWidth(box, cbi.W, true, cbi.Style)
 	var res blockResult
 	if isMulticol(box) {
 		res = c.columnsLayout(box, bottomSpace, skip, cbi, pageIsEmpty, abs, fixed, adjoining)
@@ -119,7 +119,10 @@ func (c *Context) blockBoxLayout(box *Box, bottomSpace float64, skip Skip, cb *B
 
 // blockLevelWidth computes width and horizontal margins (CSS 2.1 §10.3.3).
 // box.W is NaN for auto; box.ML/MR are NaN for auto.
-func blockLevelWidth(box *Box, cbWidth float64, withMinMax bool) {
+// blockLevelWidth sets the width and horizontal margins of a block-level
+// box; the direction of the containing block (cbStyle, may be nil)
+// decides which margin is ignored when they are over-constrained.
+func blockLevelWidth(box *Box, cbWidth float64, withMinMax bool, cbStyle *css.Style) {
 	pb := box.PL + box.PR + box.BL + box.BR
 	if math.IsNaN(box.W) {
 		box.W = cbWidth - pb
@@ -153,7 +156,7 @@ func blockLevelWidth(box *Box, cbWidth float64, withMinMax bool) {
 			box.MR = 0
 		}
 	}
-	rtl := box.Style != nil && box.Style.Kw(css.PDirection) == "rtl"
+	rtl := cbStyle != nil && cbStyle.Kw(css.PDirection) == "rtl"
 	sum := cbWidth - pb - box.W
 	switch {
 	case math.IsNaN(box.ML) && math.IsNaN(box.MR):
@@ -783,7 +786,7 @@ func (c *Context) inFlowLayout(box *Box, cbi cbInfo, index int, child *Box, newC
 			cmt := child.MT
 			if math.IsNaN(cmt) {
 				cmt = 0
-			} else if c.PageIndex > 0 && pageIsEmpty && !c.forcedBreak {
+			} else if c.PageIndex > 0 && pageIsEmpty && truncateMargin(box, c.forcedBreak) {
 				cmt = 0
 			}
 			newC := collapseMargins(append(append([]float64{}, adjoining...), cmt))
@@ -993,4 +996,21 @@ func (c *Context) addRunning(b *Box) {
 		c.pageRunning = map[string][]*Box{}
 	}
 	c.pageRunning[b.RunningName] = append(c.pageRunning[b.RunningName], b)
+}
+
+// truncateMargin reports whether margins adjoining a page break are
+// truncated (margin-break: auto truncates them after unforced breaks,
+// discard always, keep never).
+func truncateMargin(box *Box, forced bool) bool {
+	mb := "auto"
+	if box.Style != nil {
+		mb = box.Style.Kw(css.PMarginBreak)
+	}
+	switch mb {
+	case "discard":
+		return true
+	case "keep":
+		return false
+	}
+	return !forced
 }
