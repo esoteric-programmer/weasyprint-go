@@ -138,7 +138,8 @@ dates, language), presentational hints (opt-in).
 **CSS syntax and cascade**: full CSS Syntax 3 tokenizer, selectors level 4
 (combinators, attribute selectors with `i`/`s`, structural pseudo-classes,
 `:nth-child(An+B of S)`, `:not()`, `:is()`, `:where()`, `:has()`,
-`:lang()`), `::before`, `::after`, `::marker`, `!important`, origins and
+`:lang()`), `::before`, `::after`, `::marker`, `::first-letter` (inline or
+floated), `::first-line`, `!important`, origins and
 specificity, custom properties and `var()`, `calc()`/`min()`/`max()`/
 `clamp()` (also mixing lengths and percentages), CSS nesting (`&`),
 `@media`, `@import` (with `layer()`), `@supports`, `@layer` (ordered like
@@ -146,15 +147,23 @@ WeasyPrint), `@font-face`, `@counter-style`, `@page`. As in WeasyPrint,
 `@container` and `@scope` rules are ignored.
 
 **Values**: all absolute and font-relative units, viewport units, colors
-(named, hex, `rgb()`, `hsl()`, `hwb()`, `currentColor`, system colors),
+(named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`,
+`oklch()`, `color()` with predefined color spaces or `@color-profile`,
+`device-cmyk()`, `light-dark()` with `color-scheme`, `currentColor`,
+system colors; Lab, CMYK and ICC colors are written in their own PDF
+color spaces),
 linear/radial/repeating gradients (with color hints and transparency),
 `attr()`, counters and
 `counter()`/`counters()` with all predefined counter styles.
 
 **Layout**
-* Block layout with margin collapsing, `box-sizing`, min/max sizes,
-  `overflow` clipping, `text-overflow: ellipsis`, `box-shadow`,
-  `box-decoration-break`.
+* Block layout with margin collapsing, `margin-break`, `box-sizing`,
+  min/max sizes, `overflow` clipping, `clip`, `text-overflow: ellipsis`,
+  `line-clamp` (`max-lines`, `continue: discard`, `block-ellipsis`),
+  `box-shadow`, `border-image`, `mask-border`, `box-decoration-break`.
+* Logical properties (`margin-block`, `padding-inline`, `inset-inline`,
+  `inline-size`, `border-block-*`, logical radii…), resolved with
+  `direction`.
 * Inline layout: line breaking (UAX #14 style), bidirectional text
   (UAX #9, `direction`, `dir`), Arabic shaping (joining forms, lam-alef),
   `white-space`,
@@ -164,7 +173,8 @@ linear/radial/repeating gradients (with color hints and transparency),
   `hyphenate-limit-chars`, `hyphenate-limit-zone`; dictionaries for about
   50 languages are built in), `overflow-wrap`,
   `word-break`, `tab-size`, all `vertical-align` values, inline blocks,
-  kerning, standard ligatures, small caps (`smcp`/`c2sc` or emulated).
+  kerning, standard ligatures, small caps (`smcp`/`c2sc` or emulated),
+  `font-language-override`.
 * Floats and `clear`; relative, absolute and fixed positioning
   (fixed boxes repeat on every page); `z-index` stacking.
 * Lists with inside and outside markers.
@@ -174,7 +184,8 @@ linear/radial/repeating gradients (with color hints and transparency),
 * Flexbox (direction, wrap, grow/shrink/basis, alignment, gaps, order).
 * Grid (template rows/columns with `fr`, `minmax()`, `repeat()`,
   `auto-fill`, named areas, line placement and spans, auto-placement,
-  gaps, alignment).
+  gaps, alignment, `place-self`; `subgrid` is accepted and laid out as
+  `none`, like WeasyPrint).
 * Multi-column layout with balancing, column rules and
   `column-span: all`.
 * `transform` (2D) and `opacity`.
@@ -188,7 +199,8 @@ margins, `:first`/`:left`/`:right`/`:blank`/`:nth()` and named pages
 `leader()`, `target-counter()`, `target-counters()`, `target-text()`,
 footnotes (`float: footnote`, `::footnote-call`, `::footnote-marker`,
 the `footnote` counter, the `@footnote` area, `footnote-display`,
-`footnote-policy`).
+`footnote-policy`), `bleed` (PDF `TrimBox` and `BleedBox`) and crop and
+cross `marks`.
 
 **PDF output**: embedded and subset fonts (TrueType and CFF, including
 CID-keyed CJK fonts) with `ToUnicode` maps for text extraction, JPEG
@@ -203,11 +215,13 @@ intents (`srgb` or `@color-profile`), compressed object streams.
 (uncompressed, PackBits, LZW, Deflate, JPEG, CCITT Group 3/4 fax; strips
 or tiles; 1 to 16 bits; palette, gray, RGB, CMYK, alpha), WebP (lossy,
 lossless, alpha, first frame of animations; decoded exactly like
-libwebp) and SVG (shapes, paths, text, gradients,
-`use`/`symbol`, nested `svg`, clip paths, transforms, `<style>`,
+libwebp) and SVG (shapes, paths, text, gradients, patterns, markers,
+masks, the `feOffset` and `feBlend` filters (the ones WeasyPrint
+supports), `use`/`symbol`, nested `svg`, clip paths, transforms, `<style>`,
 `<image>`, `tspan` with `x`/`y`/`dx`/`dy` lists and per-chunk
 `text-anchor`), with
-`object-fit`/`object-position` and `image-resolution`.
+`object-fit`/`object-position`, `image-resolution` and
+`image-orientation` (EXIF orientation of JPEG, PNG and WebP images).
 
 **Fonts**: system fonts are discovered in the usual directories of Linux,
 macOS and Windows (plus `WEASYPRINT_FONT_PATH`) and matched with the CSS
@@ -232,18 +246,8 @@ here:
   `font-variation-settings` (variable fonts use their default instance),
   WOFF2 fonts (they require Brotli), nonstandard hyphenation patterns
   that change letters (such as the old German "ck" → "k-k").
-* CSS: `::first-line`, `::first-letter`, `line-clamp`/`max-lines`/
-  `continue: discard`, `border-image`, logical properties
-  (`margin-block`, `inline-size`, `inset-inline`...), `clip`,
-  `image-orientation`, `margin-break`, `place-self`,
-  `font-language-override`, `subgrid`, `lab()`/`lch()`/`oklab()`/
-  `oklch()`/`color()`/`light-dark()` colors.
-* Images: the rarer formats of Pillow (ICO, PPM, PCX, TGA, JPEG 2000…);
-  SVG markers, masks, patterns and filters.
-* Paged media: `bleed` and crop/cross `marks`.
-* PDF: the `debug` variant (link annotations on every id), colors in
-  CMYK and other color spaces (`device-cmyk()`, `color()` with
-  `@color-profile`).
+* Images: the rarer formats of Pillow (ICO, PPM, PCX, TGA, JPEG 2000…).
+* PDF: the `debug` variant (link annotations on every id).
 
 `--optimize-images` behaves differently on purpose: WeasyPrint re-encodes
 JPEG images with Pillow's default quality (75, or `--jpeg-quality`), which
@@ -296,6 +300,32 @@ reproduced:
   segment instead of the middle of each segment.
 * `text-transform: capitalize` uppercases digraphs such as "ǆ" instead of
   using their titlecase form ("ǅ").
+* `::first-line` styles are applied again to the first line of every
+  page a paragraph continues on, override the styles of the elements on
+  the line (and of `::first-letter`), and a floated first letter is
+  overlapped by the first line.
+* `max-lines` is applied without `continue: discard` (it only applies to
+  boxes that discard their overflow).
+* Logical properties win over physical ones regardless of the declaration
+  order; `clip: rect()` with `auto` values swaps the sides, and
+  `place-self` is ignored.
+* `image-orientation` angles rotate counterclockwise, and the image cache
+  ignores the orientation (an image keeps the first orientation used).
+* `color()` values in `display-p3`, `a98-rgb`, `prophoto-rgb`, `rec2020`
+  and `srgb-linear` are used as sRGB values without conversion;
+  `@color-profile` colors are written so that some viewers show them
+  black, and a profile without `components` makes WeasyPrint crash.
+* `border-image` with a gradient is painted black; `repeat` tiles are not
+  centered; regions are not scaled down when opposite widths overlap.
+* `mask-border` also masks the content drawn after the element (the mask
+  is never removed); SVG masks are not applied to groups, and elements
+  with a `maskContentUnits="objectBoundingBox"` mask disappear.
+* SVG patterns ignore `x`/`y` and are aligned on the bounding box even in
+  `userSpaceOnUse`; strokes painted with patterns are drawn as thin dashed
+  lines; marker angles are averaged without wrapping (wrong for turns
+  near 180°).
+* With asymmetric `bleed`, the PDF `MediaBox` uses the top bleed at the
+  bottom (and the reverse), cropping the page.
 
 ## Architecture
 
