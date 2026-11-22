@@ -1,11 +1,12 @@
 // Package hyphen implements automatic hyphenation with Liang's algorithm.
 //
-// German and English use the TeX hyphenation patterns of hyph-utf8 (for
-// German the experimental patterns of dehyph-exptl, which babel loads as
+// Languages use the TeX hyphenation patterns of hyph-utf8 (for German
+// the experimental patterns of dehyph-exptl, which babel loads as
 // "ngerman-x-latest"), with TeX's exception lists and minimum fragment
-// lengths. Other languages use the Hunspell/LibreOffice patterns shipped by
-// Pyphen, which WeasyPrint uses for "hyphens: auto"; Pyphen can also be
-// chosen for German and English to hyphenate exactly like WeasyPrint.
+// lengths. Languages without (permissively licensed) TeX patterns use the
+// Hunspell/LibreOffice patterns shipped by Pyphen, which WeasyPrint uses
+// for "hyphens: auto"; Pyphen can also be chosen for all languages to
+// hyphenate exactly like WeasyPrint.
 //
 // The pattern files keep their own licenses: see dictionaries/README.md
 // and tex/README.md.
@@ -29,7 +30,7 @@ import (
 //go:embed dictionaries/*.dic.gz tex/*.txt.gz
 var dictFS embed.FS
 
-// Source selects the hyphenation patterns of German and English.
+// Source selects the built-in hyphenation patterns.
 type Source int
 
 const (
@@ -87,39 +88,86 @@ func splitTag(lang string) []string {
 	return strings.Split(strings.ToLower(strings.ReplaceAll(lang, "-", "_")), "_")
 }
 
+type texSet struct {
+	file        string
+	left, right int
+}
+
 // texPatterns returns the TeX pattern set of a language tag and its
 // minimum fragment lengths (TeX's \lefthyphenmin and \righthyphenmin), or
-// "" for languages without TeX patterns.
+// "" for languages without TeX patterns. Tags are mapped to pattern sets
+// as babel and hyph-utf8 do.
 func texPatterns(lang string) (string, int, int) {
 	parts := splitTag(lang)
-	switch parts[0] {
-	case "de":
-		traditional, swiss := false, false
+	has := func(sub string) bool {
 		for _, p := range parts[1:] {
-			switch p {
-			case "1901":
-				traditional = true
-			case "ch", "li":
-				swiss = true
+			if p == sub {
+				return true
 			}
 		}
+		return false
+	}
+	tag := parts[0]
+	switch tag {
+	case "de":
 		switch {
-		case traditional && swiss:
-			return "hyph-de-ch-1901", 2, 2
-		case traditional:
-			return "hyph-de-1901", 2, 2
+		case has("1901") && (has("ch") || has("li")):
+			tag = "de-ch-1901"
+		case has("1901"):
+			tag = "de-1901"
+		default:
+			tag = "de-1996"
 		}
-		return "hyph-de-1996", 2, 2
 	case "en":
 		// babel's british, australian and newzealand use the British
 		// patterns; other varieties the American ones.
-		for _, p := range parts[1:] {
-			switch p {
-			case "gb", "uk", "au", "nz", "ie", "za", "in":
-				return "hyph-en-gb", 2, 3
+		tag = "en-us"
+		for _, p := range []string{"gb", "uk", "au", "nz", "ie", "za", "in"} {
+			if has(p) {
+				tag = "en-gb"
 			}
 		}
-		return "hyph-en-us", 2, 3
+	case "el":
+		tag = "el-monoton"
+		if has("polyton") {
+			tag = "el-polyton"
+		}
+	case "fi":
+		if has("school") {
+			tag = "fi-x-school"
+		}
+	case "la":
+		switch {
+		case has("classic"):
+			tag = "la-x-classic"
+		case has("liturgic"):
+			tag = "la-x-liturgic"
+		}
+	case "mn":
+		tag = "mn-cyrl"
+	case "no":
+		tag = "nb"
+	case "sh":
+		tag = "sh-latn"
+		if has("cyrl") {
+			tag = "sh-cyrl"
+		}
+	case "sr":
+		// Serbian: babel's serbian (Latin) and serbianc patterns.
+		tag = "sh-cyrl"
+		if has("latn") {
+			tag = "sh-latn"
+		}
+	case "am", "ti", "gez", "byn", "tig":
+		tag = "mul-ethi"
+	case "zh":
+		if !has("latn") {
+			return "", 0, 0
+		}
+		tag = "zh-latn-pinyin"
+	}
+	if set, ok := texSets[tag]; ok {
+		return set.file, set.left, set.right
 	}
 	return "", 0, 0
 }
@@ -131,7 +179,7 @@ func ForLang(lang string) *Dict {
 }
 
 // Lookup returns the hyphenation dictionary for a language tag, using the
-// given patterns for German and English, or nil.
+// given built-in patterns, or nil.
 func Lookup(lang string, src Source) *Dict {
 	if src == TeX {
 		if file, left, right := texPatterns(lang); file != "" {
@@ -401,6 +449,7 @@ func (d *Dict) Positions(word string, left, right int) []int {
 		}
 	}
 	n := len([]rune(word))
+	left, right = max(left, 1), max(right, 1)
 	var out []int
 	for _, p := range d.points(word) {
 		if p >= left && p <= n-right {

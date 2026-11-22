@@ -173,8 +173,8 @@ type Options struct {
 	// DefaultPageSize is the page size in CSS px of pages whose size the
 	// document's CSS doesn't set (default A4). See PageSize.
 	DefaultPageSize [2]float64
-	// Hyphenation selects the hyphenation patterns used by "hyphens:
-	// auto" for German and English.
+	// Hyphenation selects the built-in hyphenation patterns used by
+	// "hyphens: auto".
 	Hyphenation Hyphenation
 	// HyphenationRules are user-defined hyphenation patterns and
 	// exceptions, which replace or extend the built-in ones of their
@@ -189,8 +189,9 @@ type Hyphenation int
 
 const (
 	// HyphenationTeX uses TeX's hyphenation patterns, exceptions and
-	// minimum fragment lengths for German and English (for German the
-	// experimental patterns of dehyph-exptl, babel's "ngerman-x-latest").
+	// minimum fragment lengths (hyph-utf8; for German the experimental
+	// patterns of dehyph-exptl, babel's "ngerman-x-latest"), and Pyphen's
+	// for languages without them.
 	HyphenationTeX Hyphenation = iota
 	// HyphenationPyphen uses the Hunspell patterns of Pyphen, like
 	// WeasyPrint.

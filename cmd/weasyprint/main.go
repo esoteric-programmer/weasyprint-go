@@ -88,7 +88,7 @@ func main() {
 	fullFonts := c.boolean("", "full-fonts", "embed unmodified font files when possible")
 	hinting := c.boolean("", "hinting", "keep hinting information in embedded fonts")
 	cache := c.str("c", "cache-folder", "", "store remote resources in a folder to reuse them in later renderings")
-	hyphenation := c.str("", "hyphenation", "tex", "hyphenation patterns for German and English: tex (TeX's, the default)\nor pyphen (the Hunspell patterns used by WeasyPrint)")
+	hyphenation := c.str("", "hyphenation", "tex", "built-in hyphenation patterns: tex (LaTeX's, the default)\nor pyphen (the Hunspell patterns used by WeasyPrint)")
 	hyphPatterns := c.multi("", "hyphenation-patterns", "LANG=FILE: hyphenation patterns replacing the built-in ones of a language\n(TeX \\patterns file, Hunspell .dic or pattern list; may be repeated)")
 	hyphExceptions := c.multi("", "hyphenation-exceptions", "LANG=FILE: hyphenation exceptions (\"as-so-ciate\") added for a language\n(may be repeated)")
 	hyphMins := c.multi("", "hyphenation-min", "LANG=LEFT,RIGHT: minimum characters before and after a hyphen\nfor a language (may be repeated)")

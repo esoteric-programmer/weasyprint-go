@@ -1,0 +1,65 @@
+% title: Hyphenation patterns for Romansh
+% copyright: Copyright (C) 2012 Claudio Beccari, 2024 far.ch
+% notice: This file is part of the hyph-utf8 package.
+%     See http://www.hyphenation.org/tex for more information.
+% language:
+%     name: Romansh
+%     tag: rm
+% version: 2.0 2024-10-29
+% authors:
+%   - name: Claudio Beccari
+%     contact: claudio.beccari (at) gmail.com
+%   -
+%     name: Martin Cantieni, far.ch
+%     contact: da@far.ch
+% licence:
+%     - This file may be distributed under any of the following licences:
+%     -
+%         name: MIT
+%         url: https://opensource.org/licenses/MIT
+%         text: >
+%             Permission is hereby granted, free of charge, to any person
+%             obtaining a copy of this software and associated documentation
+%             files (the "Software"), to deal in the Software without
+%             restriction, including without limitation the rights to use,
+%             copy, modify, merge, publish, distribute, sublicense, and/or sell
+%             copies of the Software, and to permit persons to whom the
+%             Software is furnished to do so, subject to the following
+%             conditions:
+%
+%             The above copyright notice and this permission notice shall be
+%             included in all copies or substantial portions of the Software.
+%
+%             THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+%             EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+%             OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+%             NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+%             HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+%             WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+%             FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+%             OTHER DEALINGS IN THE SOFTWARE.
+%     -
+%         name: LPPL
+%         version: 1.3
+%         or_later: true
+%         status: maintained
+%         maintainer: far.ch, da@far.ch
+% hyphenmins:
+%     typesetting:
+%         left: 2
+%         right: 2
+% changes:
+%     - 2012-01-14 - First release 1.0
+%     - 2012-04-10 - Version 1.1. Fix inconsistencies.
+%     - 2024-10-29 - Version 2.0. Added and replaced lots of patterns, all Romansh idioms taken into account
+% texlive:
+%     encoding: ec
+%     babelname: romansh
+%     message: Romansh hyphenation patterns
+%     description: |-
+%         Hyphenation patterns for Romansh.
+%         All Romansh idioms and Rumantsch Grischun taken into account, developed
+%         in collaboration with Fundaziun Medias Rumantschas (Romansh news agency)
+%         and Lia Rumantscha (Romansh umbrella organisation).
+% ==========================================
+% 

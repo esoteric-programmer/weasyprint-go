@@ -55,8 +55,9 @@ func TestTeX(t *testing.T) {
 	if got := Lookup("de", Pyphen).Hyphenate("Urinstinkt"); got != "Urin-stinkt" {
 		t.Errorf("Pyphen de Urinstinkt: got %s", got)
 	}
-	if d := Lookup("fr", TeX); d == nil || d.MinWord != 5 {
-		t.Error("French should fall back to Pyphen")
+	// Czech has only GPL TeX patterns: Pyphen's are used.
+	if d := Lookup("cs", TeX); d == nil || d.MinWord != 5 {
+		t.Error("Czech should fall back to Pyphen")
 	}
 }
 
@@ -67,5 +68,34 @@ func TestDecomposed(t *testing.T) {
 	}
 	if got := d.Hyphenate("Bücherei"); got != "Bü-che-rei" {
 		t.Errorf("composed: got %q", got)
+	}
+}
+
+func TestAllTeXSets(t *testing.T) {
+	for tag, set := range texSets {
+		set := set
+		d := cached("tex/"+set.file+".txt.gz", func(d *Dict) {
+			d.Left, d.Right, d.MinWord = set.left, set.right, set.left+set.right
+		})
+		if d == nil || len(d.patterns) == 0 {
+			t.Errorf("%s: no patterns", tag)
+		}
+	}
+	cases := []struct{ lang, word, want string }{
+		{"fr", "hyphénation", "hy-phé-na-tion"},
+		{"es", "ejemplo", "ejem-plo"},
+		{"it", "sillabazione", "sil-la-ba-zio-ne"},
+		{"nl", "lettergreep", "let-ter-greep"},
+		{"pl", "przykład", "przy-kład"},
+		{"ru", "пример", "при-мер"},
+		{"sv", "avstavning", "av-stav-ning"},
+		{"no", "orddeling", "ord-de-ling"},
+		{"el", "παράδειγμα", "πα-ρά-δειγ-μα"},
+		{"sr-Latn", "primer", "pri-mer"},
+	}
+	for _, c := range cases {
+		if got := ForLang(c.lang).Hyphenate(c.word); got != c.want {
+			t.Errorf("%s %s: got %s, want %s", c.lang, c.word, got, c.want)
+		}
 	}
 }

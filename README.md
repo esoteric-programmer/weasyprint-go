@@ -45,7 +45,7 @@ Options (the same as WeasyPrint's CLI, plus `--page-size` and
 | `--hyphenation-patterns LANG=FILE` | Hyphenation patterns replacing the built-in ones of a language: a TeX file with `\patterns{…}` (and `\hyphenation{…}`), a Hunspell `.dic` file or a pattern list (may be repeated) |
 | `--hyphenation-exceptions LANG=FILE` | Hyphenation exceptions (`as-so-ciate`; a word without hyphens is never hyphenated) added for a language (may be repeated) |
 | `--hyphenation-min LANG=LEFT,RIGHT` | Minimum characters before and after a hyphen for a language (`\lefthyphenmin`, `\righthyphenmin`; may be repeated) |
-| `--hyphenation PATTERNS` | Hyphenation patterns for German and English: `tex` (default, TeX's patterns, see below) or `pyphen` (the Hunspell patterns WeasyPrint uses) |
+| `--hyphenation PATTERNS` | Built-in hyphenation patterns: `tex` (default, LaTeX's patterns, see below) or `pyphen` (the Hunspell patterns WeasyPrint uses) |
 | `-a`, `--attachment FILE` | Attach a file to the PDF (repeatable) |
 | `--attachment-relationship REL` | Relationship of the attachment at the same position (`Source`, `Data`, `Alternative`, `Supplement`, `Unspecified`…), for PDF/A-3 |
 | `--pdf-variant VARIANT` | `pdf/a-1b`, `pdf/a-2b`, `pdf/a-3b`, `pdf/a-2u`, `pdf/a-3u`, `pdf/a-4u`, `pdf/a-1a`, `pdf/a-2a`, `pdf/a-3a`, `pdf/a-4e`, `pdf/a-4f`, `pdf/ua-1`, `pdf/ua-2`, `pdf/x-1a`, `pdf/x-3`, `pdf/x-4`, `pdf/x-5g` |
@@ -91,7 +91,7 @@ Other entry points: `HTMLFromString(source, baseURL)`, `HTMLFromBytes`,
 `Options.DefaultPageSize` sets the size of pages whose size the document
 doesn't set (A4 otherwise); `weasyprint.PageSize("A5 landscape")` converts
 a CSS page size for it. `Options.Hyphenation` selects the hyphenation
-patterns of German and English (`HyphenationTeX`, the default, or
+built-in hyphenation patterns (`HyphenationTeX`, the default, or
 `HyphenationPyphen`); `Options.HyphenationRules` adds user-defined
 patterns and exceptions per language, from files or from memory.
 `HTML.Render(opts)` returns a `*Document` with page sizes and metadata,
@@ -178,9 +178,8 @@ linear/radial/repeating gradients (with color hints and transparency),
   `text-align` including `justify`, `text-indent`, `letter-spacing`,
   `word-spacing`, `text-transform`, soft hyphens, automatic hyphenation
   (`hyphens: auto` with the `lang` attribute, `hyphenate-character`,
-  `hyphenate-limit-chars`, `hyphenate-limit-zone`; dictionaries for about
-  50 languages are built in, and German and English hyphenate like LaTeX,
-  see below), `overflow-wrap`,
+  `hyphenate-limit-chars`, `hyphenate-limit-zone`; LaTeX's patterns for
+  about 70 languages are built in, see below), `overflow-wrap`,
   `word-break`, `tab-size`, all `vertical-align` values, inline blocks.
 * OpenType shaping with GSUB, GPOS and GDEF, following HarfBuzz's model
   for Latin, Greek, Cyrillic and other simple scripts and for Arabic:
@@ -328,9 +327,12 @@ a single font when one can draw it whole: Pango chooses a font for each
 character, so that WeasyPrint draws marks missing from the base's font
 as spacing characters next to it.
 
-Hyphenation of German and English differs on purpose. WeasyPrint uses the
-Hunspell patterns of Pyphen for every language; here German and English
-use TeX's patterns from hyph-utf8 by default, as LaTeX does: for German
+Hyphenation differs on purpose. WeasyPrint uses the Hunspell patterns of
+Pyphen for every language; here languages use TeX's patterns from
+hyph-utf8 by default, as LaTeX does, with their exception lists and
+minimum fragment lengths (about 70 languages, listed in
+`internal/hyphen/tex/README.md`; a few with GPL-only patterns keep
+Pyphen's): for German
 the experimental patterns of dehyph-exptl (2024-02-28), which babel loads
 with `\babelprovide[hyphenrules=ngerman-x-latest]{ngerman}` (reformed
 spelling for `de`, `de-DE`, `de-AT`, `de-CH`…; traditional spelling for
@@ -343,7 +345,8 @@ wrong breaks such as "Urin-stinkt", "Staub-ecken" or "Druck-e-r-zeug-nis"
 lengths are used: 2 letters before and after the hyphen in German, 2
 before and 3 after in English, with no other minimum word length (Pyphen
 uses 5 letters per word, 2 before and 2 after). `--hyphenation pyphen`
-(`Options.Hyphenation`) restores WeasyPrint's hyphenation.
+(`Options.Hyphenation`) restores WeasyPrint's hyphenation for all
+languages.
 
 The output was compared with WeasyPrint 70 page by page. The remaining
 differences come from WeasyPrint bugs that are intentionally not
@@ -458,9 +461,9 @@ WeasyPrint's implementation. The hyphenation dictionaries in
 `internal/hyphen/dictionaries` come from Pyphen (LibreOffice/Hunspell
 patterns) and keep their own licenses, given in the README files next to
 them (mostly LGPL/MPL/GPL tri-licenses); the TeX patterns in
-`internal/hyphen/tex` come from hyph-utf8 and dehyph-exptl (MIT, and a
-permissive notice for American English; see `internal/hyphen/tex/README.md`
-and the header files there). The VP8 and VP8L decoders in
+`internal/hyphen/tex` come from hyph-utf8 and dehyph-exptl (MIT, LPPL,
+LGPL, BSD and other permissive licenses, per language; see
+`internal/hyphen/tex/README.md` and the header files there). The VP8 and VP8L decoders in
 `internal/images/vp8` and `internal/images/vp8l` come from
 golang.org/x/image (BSD 3-Clause, The Go Authors), and the sRGB profile
 in `internal/draw` is the International Color Consortium's
