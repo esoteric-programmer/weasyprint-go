@@ -591,10 +591,25 @@ func (ctx *computeCtx) computeLengths(v Value) Value {
 }
 
 func (ctx *computeCtx) color(v Value) Value {
+	if ld, ok := v.(LightDark); ok {
+		v = ld.Choose(ctx.style.vals[PColorScheme])
+	}
 	if k, ok := v.(Keyword); ok && k == "currentcolor" {
 		return ctx.style.vals[PColor]
 	}
 	return v
+}
+
+// ResolveColor returns the color of a color value (currentcolor,
+// light-dark()...) for this style.
+func (s *Style) ResolveColor(v Value) Color {
+	if ld, ok := v.(LightDark); ok {
+		v = ld.Choose(s.vals[PColorScheme])
+	}
+	if c, ok := v.(Color); ok {
+		return c
+	}
+	return s.Color(PColor)
 }
 
 func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo string) *Style {
@@ -700,14 +715,22 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 	if parent == nil && pseudo == "" {
 		ctx.rootFontSize = ctx.fontSize
 	}
-	// color next (for currentcolor).
+	// color-scheme and color next (for light-dark() and currentcolor).
+	csv, _ := resolve(PColorScheme)
+	s.vals[PColorScheme] = csv
 	cv, needCompute := resolve(PColor)
+	if ld, ok := cv.(LightDark); ok {
+		cv = ld.Choose(csv)
+		if k, ok := cv.(Keyword); ok && k == "currentcolor" {
+			needCompute = true
+		}
+	}
 	if needCompute {
 		if k, ok := cv.(Keyword); ok && k == "currentcolor" {
 			if parent != nil {
 				cv = parent.vals[PColor]
 			} else {
-				cv = Color{0, 0, 0, 1}
+				cv = Color{R: 0, G: 0, B: 0, A: 1}
 			}
 		}
 	}
@@ -715,7 +738,7 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 
 	for i := range Props {
 		id := PropID(i)
-		if id == PFontSize || id == PColor {
+		if id == PFontSize || id == PColor || id == PColorScheme {
 			continue
 		}
 		v, needCompute := resolve(id)

@@ -43,7 +43,6 @@ var aliases = map[string]string{
 	"-webkit-print-color-adjust": "",
 	"print-color-adjust":         "",
 	"color-adjust":               "",
-	"color-scheme":               "",
 }
 
 func sides(prefix, suffix string) []PropID {

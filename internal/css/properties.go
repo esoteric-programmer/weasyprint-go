@@ -1177,7 +1177,7 @@ var (
 	POutlineColor  = def("outline-color", false, Keyword("currentcolor"), parseColorProp)
 	POutlineOffset = def("outline-offset", false, Px(0), lengthKw(true, false))
 
-	PColor   = def("color", true, Color{0, 0, 0, 1}, parseColorProp)
+	PColor   = def("color", true, Color{R: 0, G: 0, B: 0, A: 1}, parseColorProp)
 	POpacity = def("opacity", false, Number(1), parseOpacity)
 
 	PBackgroundColor      = def("background-color", false, Transparent, parseColorProp)
@@ -1296,12 +1296,14 @@ var (
 	PLink          = def("link", false, Keyword("none"), parseLink)
 	PAnchor        = def("anchor", false, Keyword("none"), parseAnchor)
 
-	PTransform       = def("transform", false, Keyword("none"), parseTransform)
-	PTransformOrigin = def("transform-origin", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
-	PObjectFit       = def("object-fit", false, Keyword("fill"), kw("fill", "contain", "cover", "none", "scale-down"))
-	PObjectPosition  = def("object-position", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
-	PImageRendering  = def("image-rendering", true, Keyword("auto"), kw("auto", "crisp-edges", "pixelated", "smooth", "high-quality"))
-	PImageResolution = def("image-resolution", true, Number(1), func(ts []Token, _ *ParseCtx) Value {
+	PTransform        = def("transform", false, Keyword("none"), parseTransform)
+	PTransformOrigin  = def("transform-origin", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
+	PObjectFit        = def("object-fit", false, Keyword("fill"), kw("fill", "contain", "cover", "none", "scale-down"))
+	PObjectPosition   = def("object-position", false, Position{"left", Percent(50), "top", Percent(50)}, parseSinglePosition)
+	PImageRendering   = def("image-rendering", true, Keyword("auto"), kw("auto", "crisp-edges", "pixelated", "smooth", "high-quality"))
+	PColorScheme      = def("color-scheme", true, Keyword("normal"), parseColorScheme)
+	PImageOrientation = def("image-orientation", false, Keyword("from-image"), parseImageOrientation)
+	PImageResolution  = def("image-resolution", true, Number(1), func(ts []Token, _ *ParseCtx) Value {
 		if t, ok := single(ts); ok && t.Type == TDimension {
 			switch t.Value {
 			case "dppx", "x":
@@ -1361,4 +1363,37 @@ func ParsePageSize(value string) ([2]float64, bool) {
 		out[i] = l.V * k
 	}
 	return out, true
+}
+
+// ImageOrientation is an angle (multiple of 90 degrees, clockwise) and a
+// horizontal flip of image-orientation.
+type ImageOrientation struct {
+	Angle int
+	Flip  bool
+}
+
+func parseImageOrientation(ts []Token, _ *ParseCtx) Value {
+	ts = RemoveWS(ts)
+	if t, ok := single(ts); ok && t.Type == TIdent && (t.Value == "none" || t.Value == "from-image") {
+		return Keyword(t.Value)
+	}
+	var o ImageOrientation
+	seenAngle, seenFlip := false, false
+	for _, t := range ts {
+		if t.Type == TIdent && t.Value == "flip" && !seenFlip {
+			seenFlip, o.Flip = true, true
+			continue
+		}
+		if rad, ok := angleToRad(t); ok && !seenAngle {
+			seenAngle = true
+			q := int(math.Round(rad / (math.Pi / 2)))
+			o.Angle = ((q % 4) + 4) % 4 * 90
+			continue
+		}
+		return nil
+	}
+	if !seenAngle && !seenFlip {
+		return nil
+	}
+	return o
 }

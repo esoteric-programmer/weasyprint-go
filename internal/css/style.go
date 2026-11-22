@@ -77,7 +77,7 @@ func (s *Style) Color(id PropID) Color {
 	if id != PColor {
 		return s.Color(PColor)
 	}
-	return Color{0, 0, 0, 1}
+	return Color{R: 0, G: 0, B: 0, A: 1}
 }
 
 // FontSize returns the computed font size in px.

@@ -59,10 +59,18 @@ func (l Length) Resolve(base float64) float64 {
 }
 
 // Color is an RGBA color with components in [0, 1].
-type Color struct{ R, G, B, A float64 }
+type Color struct {
+	// R, G, B are sRGB components (an approximation for other spaces).
+	R, G, B, A float64
+	// Space is "" for sRGB, "lab-d50" or "lab-d65" (CIE Lab with this
+	// white point), "device-cmyk" or the name of an @color-profile rule;
+	// C are the components in this space.
+	Space string
+	C     [4]float64
+}
 
 // Transparent is the transparent color.
-var Transparent = Color{0, 0, 0, 0}
+var Transparent = Color{R: 0, G: 0, B: 0, A: 0}
 
 // IsTransparent reports whether the color is fully transparent.
 func (c Color) IsTransparent() bool { return c.A <= 0 }
@@ -217,7 +225,7 @@ func parseColorToken(t Token) (Value, bool) {
 			return Transparent, true
 		}
 		if c, ok := namedColors[t.Value]; ok {
-			return Color{float64(c[0]) / 255, float64(c[1]) / 255, float64(c[2]) / 255, 1}, true
+			return Color{R: float64(c[0]) / 255, G: float64(c[1]) / 255, B: float64(c[2]) / 255, A: 1}, true
 		}
 		if c, ok := systemColors[t.Value]; ok {
 			return c, true
@@ -231,13 +239,13 @@ func parseColorToken(t Token) (Value, bool) {
 }
 
 var systemColors = map[string]Color{
-	"canvas": {1, 1, 1, 1}, "canvastext": {0, 0, 0, 1}, "linktext": {0, 0, 0.933, 1},
-	"visitedtext": {0.333, 0.102, 0.545, 1}, "activetext": {1, 0, 0, 1},
-	"buttonface": {0.941, 0.941, 0.941, 1}, "buttontext": {0, 0, 0, 1},
-	"buttonborder": {0.463, 0.463, 0.463, 1}, "field": {1, 1, 1, 1},
-	"fieldtext": {0, 0, 0, 1}, "highlight": {0.71, 0.835, 1, 1},
-	"highlighttext": {0, 0, 0, 1}, "graytext": {0.427, 0.427, 0.427, 1},
-	"mark": {1, 1, 0, 1}, "marktext": {0, 0, 0, 1},
+	"canvas": {R: 1, G: 1, B: 1, A: 1}, "canvastext": {R: 0, G: 0, B: 0, A: 1}, "linktext": {R: 0, G: 0, B: 0.933, A: 1},
+	"visitedtext": {R: 0.333, G: 0.102, B: 0.545, A: 1}, "activetext": {R: 1, G: 0, B: 0, A: 1},
+	"buttonface": {R: 0.941, G: 0.941, B: 0.941, A: 1}, "buttontext": {R: 0, G: 0, B: 0, A: 1},
+	"buttonborder": {R: 0.463, G: 0.463, B: 0.463, A: 1}, "field": {R: 1, G: 1, B: 1, A: 1},
+	"fieldtext": {R: 0, G: 0, B: 0, A: 1}, "highlight": {R: 0.71, G: 0.835, B: 1, A: 1},
+	"highlighttext": {R: 0, G: 0, B: 0, A: 1}, "graytext": {R: 0.427, G: 0.427, B: 0.427, A: 1},
+	"mark": {R: 1, G: 1, B: 0, A: 1}, "marktext": {R: 0, G: 0, B: 0, A: 1},
 }
 
 func parseHexColor(h string) (Value, bool) {
@@ -256,7 +264,7 @@ func parseHexColor(h string) (Value, bool) {
 			}
 			c[i] = v
 		}
-		return Color{c[0], c[1], c[2], c[3]}, true
+		return Color{R: c[0], G: c[1], B: c[2], A: c[3]}, true
 	case 6, 8:
 		var c [4]float64
 		c[3] = 1
@@ -267,7 +275,7 @@ func parseHexColor(h string) (Value, bool) {
 			}
 			c[i] = v
 		}
-		return Color{c[0], c[1], c[2], c[3]}, true
+		return Color{R: c[0], G: c[1], B: c[2], A: c[3]}, true
 	}
 	return nil, false
 }
@@ -331,6 +339,9 @@ func alphaValue(t Token) (float64, bool) {
 func clamp01(f float64) float64 { return math.Max(0, math.Min(1, f)) }
 
 func parseColorFunction(t Token) (Value, bool) {
+	if v, ok, handled := parseColor4Function(t); handled {
+		return v, ok
+	}
 	args, ok := colorArgs(t.Children)
 	if !ok {
 		return nil, false
@@ -359,7 +370,7 @@ func parseColorFunction(t Token) (Value, bool) {
 				return nil, false
 			}
 		}
-		return Color{c[0], c[1], c[2], a}, true
+		return Color{R: c[0], G: c[1], B: c[2], A: a}, true
 	case "hsl", "hsla":
 		h, ok := parseHue(args[0])
 		if !ok {
@@ -375,7 +386,7 @@ func parseColorFunction(t Token) (Value, bool) {
 			}
 		}
 		r, g, b := hslToRGB(h, sl[0], sl[1])
-		return Color{r, g, b, a}, true
+		return Color{R: r, G: g, B: b, A: a}, true
 	case "hwb":
 		h, ok := parseHue(args[0])
 		if !ok {
@@ -393,11 +404,11 @@ func parseColorFunction(t Token) (Value, bool) {
 		w, bl := wb[0], wb[1]
 		if w+bl >= 1 {
 			g := w / (w + bl)
-			return Color{g, g, g, a}, true
+			return Color{R: g, G: g, B: g, A: a}, true
 		}
 		r, g, b := hslToRGB(h, 1, 0.5)
 		f := func(c float64) float64 { return c*(1-w-bl) + w }
-		return Color{f(r), f(g), f(b), a}, true
+		return Color{R: f(r), G: f(g), B: f(b), A: a}, true
 	}
 	return nil, false
 }

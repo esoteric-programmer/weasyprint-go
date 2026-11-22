@@ -121,7 +121,9 @@ type Renderer struct {
 	propagated  map[*layout.Box]bool
 	written     []writtenAttachment
 	tags        *tagState
-	forms       *formState
+	// colorSpaceRefs are the color spaces used in the document.
+	colorSpaceRefs map[string]pdf.Ref
+	forms          *formState
 }
 
 // Write renders pages to w as a PDF file.
@@ -438,6 +440,10 @@ func (r *Renderer) outlines(pages []*layout.Page) pdf.Ref {
 type canvas struct {
 	// ellipsisRight is the limit of text ending with an ellipsis, or 0.
 	ellipsisRight float64
+	// colorSpaces are the color spaces used by the page.
+	colorSpaces pdf.Dict
+	// orientation of the background images being drawn.
+	orientation images.Orientation
 	// lineX is the start of the line box being painted, the origin of the
 	// patterns of text decorations.
 	lineX    float64
@@ -466,17 +472,103 @@ func (cv *canvas) alphaState(fill, stroke float64) string {
 }
 
 func (cv *canvas) setFill(col css.Color) {
-	cv.c.SetFillRGB(col.R, col.G, col.B)
+	if !cv.setSpecialColor(col, false) {
+		cv.c.SetFillRGB(col.R, col.G, col.B)
+	}
 	if col.A < 1 {
 		cv.c.SetState(cv.alphaState(col.A, 1))
 	}
 }
 
 func (cv *canvas) setStroke(col css.Color) {
-	cv.c.SetStrokeRGB(col.R, col.G, col.B)
+	if !cv.setSpecialColor(col, true) {
+		cv.c.SetStrokeRGB(col.R, col.G, col.B)
+	}
 	if col.A < 1 {
 		cv.c.SetState(cv.alphaState(1, col.A))
 	}
+}
+
+// setSpecialColor sets colors in other color spaces than sRGB, like
+// WeasyPrint: CIE Lab (lab(), lch(), oklab(), oklch(), XYZ), DeviceCMYK
+// and ICC profiles of @color-profile rules.
+func (cv *canvas) setSpecialColor(col css.Color, stroke bool) bool {
+	n := func(v float64) string { return pdf.FormatNumber(v) }
+	op := "sc"
+	csOp := "cs"
+	if stroke {
+		op, csOp = "SC", "CS"
+	}
+	switch {
+	case col.Space == "":
+		return false
+	case col.Space == "device-cmyk":
+		k := "k"
+		if stroke {
+			k = "K"
+		}
+		cv.c.Op(fmt.Sprintf("%s %s %s %s %s", n(col.C[0]), n(col.C[1]), n(col.C[2]), n(col.C[3]), k))
+		return true
+	case col.Space == "lab-d50" || col.Space == "lab-d65":
+		cv.useColorSpace(col.Space)
+		cv.c.Op(fmt.Sprintf("/%s %s %s %s %s %s", col.Space, csOp, n(col.C[0]), n(col.C[1]), n(col.C[2]), op))
+		return true
+	default:
+		p := cv.r.opts.ColorProfiles[col.Space]
+		if p == nil {
+			return false
+		}
+		cv.useColorSpace(col.Space)
+		parts := []string{"/" + pdfName(col.Space), csOp}
+		for i := 0; i < p.Components && i < 4; i++ {
+			parts = append(parts, n(col.C[i]))
+		}
+		cv.c.Op(strings.Join(append(parts, op), " "))
+		return true
+	}
+}
+
+// pdfName escapes a name for content streams.
+func pdfName(s string) string {
+	var b strings.Builder
+	for _, c := range []byte(s) {
+		if c < '!' || c > '~' || strings.IndexByte("#()<>[]{}/%", c) >= 0 {
+			fmt.Fprintf(&b, "#%02X", c)
+		} else {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// useColorSpace adds a color space to the resources of the page.
+func (cv *canvas) useColorSpace(name string) {
+	if cv.colorSpaces == nil {
+		cv.colorSpaces = pdf.Dict{}
+	}
+	if _, ok := cv.colorSpaces[name]; ok {
+		return
+	}
+	r := cv.r
+	if r.colorSpaceRefs == nil {
+		r.colorSpaceRefs = map[string]pdf.Ref{}
+	}
+	ref, ok := r.colorSpaceRefs[name]
+	if !ok {
+		var cs pdf.Array
+		switch name {
+		case "lab-d50":
+			cs = pdf.Array{pdf.Name("Lab"), pdf.Dict{"WhitePoint": []float64{0.3457 / 0.3585, 1, (1 - 0.3457 - 0.3585) / 0.3585}, "Range": []float64{-125, 125, -125, 125}}}
+		case "lab-d65":
+			cs = pdf.Array{pdf.Name("Lab"), pdf.Dict{"WhitePoint": []float64{0.3127 / 0.3290, 1, (1 - 0.3127 - 0.3290) / 0.3290}, "Range": []float64{-125, 125, -125, 125}}}
+		default:
+			p := r.opts.ColorProfiles[name]
+			cs = pdf.Array{pdf.Name("ICCBased"), r.doc.Add(&pdf.Stream{Dict: pdf.Dict{"N": p.Components}, Data: p.Data, Compress: r.opts.Compress})}
+		}
+		ref = r.doc.Add(cs)
+		r.colorSpaceRefs[name] = ref
+	}
+	cv.colorSpaces[name] = ref
 }
 
 func (cv *canvas) pushGroup() {
@@ -520,6 +612,9 @@ func (cv *canvas) resources() pdf.Dict {
 	}
 	if len(cv.patterns) > 0 {
 		res["Pattern"] = cv.patterns
+	}
+	if len(cv.colorSpaces) > 0 {
+		res["ColorSpace"] = cv.colorSpaces
 	}
 	return res
 }

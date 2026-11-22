@@ -156,10 +156,7 @@ func (cv *canvas) drawText(b *layout.Box, decos []decoration) {
 	if shadows, ok := b.Style.Get(css.PTextShadow).([]css.Shadow); ok {
 		for i := len(shadows) - 1; i >= 0; i-- {
 			s := shadows[i]
-			col, ok := s.Color.(css.Color)
-			if !ok {
-				col = color
-			}
+			col := b.Style.ResolveColor(s.Color)
 			cv.drawGlyphs(runes, glyphs, advances, b.X+s.X.V, baseline+s.Y.V, col)
 		}
 	}

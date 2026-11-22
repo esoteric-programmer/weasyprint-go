@@ -369,7 +369,7 @@ func (c *Context) marginContent(style *css.Style, ev *marginEval) []*Box {
 		case "url":
 			flush()
 			if c.Images != nil {
-				if im := c.Images.Get(it.Str); im != nil {
+				if im := c.Images.GetOriented(it.Str, Orientation(style)); im != nil {
 					out = append(out, &Box{Kind: KReplaced, Style: c.R.AnonymousStyle(style), Image: im, IsInline: true, Anonymous: true})
 				}
 			}

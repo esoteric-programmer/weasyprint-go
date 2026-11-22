@@ -309,10 +309,7 @@ func (cv *canvas) drawBoxShadows(b *layout.Box, inset bool) {
 		if sh.Inset != inset {
 			continue
 		}
-		col, ok := sh.Color.(css.Color)
-		if !ok {
-			col = b.Style.Color(css.PColor)
-		}
+		col := b.Style.ResolveColor(sh.Color)
 		spread := sh.Spread.V
 		if inset {
 			spread = -spread

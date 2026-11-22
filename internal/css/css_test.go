@@ -34,7 +34,7 @@ func TestCascade(t *testing.T) {
 	if fs := s.FontSize(); fs != 48 {
 		t.Errorf("h1 font-size %v", fs)
 	}
-	if c := s.Color(PColor); c != (Color{0, 1, 0, 1}) {
+	if c := s.Color(PColor); c != (Color{R: 0, G: 1, B: 0, A: 1}) {
 		t.Errorf("h1 color %v", c)
 	}
 	if m := s.Px(PMarginTop, 0); m < 32.1 || m > 32.2 {
@@ -44,7 +44,7 @@ func TestCascade(t *testing.T) {
 		t.Errorf("anchor %q", s.Anchor())
 	}
 	p := r.Style(d.Find("p"))
-	if c := p.Color(PColor); c != (Color{1, 0, 0, 1}) {
+	if c := p.Color(PColor); c != (Color{R: 1, G: 0, B: 0, A: 1}) {
 		t.Errorf("p color %v", c)
 	}
 	if v := p.Px(PMarginLeft, 0); v != 32 {
@@ -67,7 +67,7 @@ func TestCascade(t *testing.T) {
 	if r.Style(li).Display() != "list-item" {
 		t.Errorf("li display")
 	}
-	if m := r.PseudoStyle(li, "marker"); m == nil || m.Color(PColor) != (Color{0, 0, 1, 1}) {
+	if m := r.PseudoStyle(li, "marker"); m == nil || m.Color(PColor) != (Color{R: 0, G: 0, B: 1, A: 1}) {
 		t.Errorf("marker style")
 	}
 	if got := r.CounterStyles.Marker(3, Keyword("lower-roman")); got != "iii. " {
@@ -127,7 +127,7 @@ h2 { color: green } @layer a { h2 { color: red } }
 @container (min-width: 1px) { h4 { color: red } }
 @scope (body) { h6 { color: red } }
 h5 { color: red; & b { color: green } }`)
-	red, green, black := Color{1, 0, 0, 1}, Color{0, 128.0 / 255, 0, 1}, Color{0, 0, 0, 1}
+	red, green, black := Color{R: 1, G: 0, B: 0, A: 1}, Color{R: 0, G: 128.0 / 255, B: 0, A: 1}, Color{R: 0, G: 0, B: 0, A: 1}
 	for _, c := range []struct {
 		tag  string
 		want Color
@@ -148,5 +148,33 @@ func TestMinMaxClampWithPercentages(t *testing.T) {
 		if got := r.Style(d.Find(c.tag)).Px(PWidth, 400); got != c.want {
 			t.Errorf("%s width %v, want %v", c.tag, got, c.want)
 		}
+	}
+}
+
+func TestColor4(t *testing.T) {
+	cases := map[string]Color{
+		"lab(50% 40 59.5)":             {Space: "lab-d50"},
+		"oklch(60% 0.15 50)":           {Space: "lab-d65"},
+		"device-cmyk(0% 70% 20% 0%)":   {Space: "device-cmyk"},
+		"color(display-p3 1 0.5 0)":    {},
+		"color(--profile 0.1 0.2 0.3)": {Space: "--profile"},
+	}
+	for src, want := range cases {
+		ts := Tokenize(src)
+		v, ok := parseColorToken(RemoveWS(ts)[0])
+		c, isColor := v.(Color)
+		if !ok || !isColor || c.Space != want.Space {
+			t.Errorf("%s: %#v", src, v)
+		}
+	}
+	if c, _ := parseColorToken(RemoveWS(Tokenize("lab(50% 40 59.5)"))[0]); c.(Color).R < 0.7 || c.(Color).G > 0.4 {
+		t.Errorf("lab sRGB approximation %v", c)
+	}
+	r, d := resolve(t, `<html><body><h1 style="color-scheme:dark;background-color:light-dark(red, green)">a</h1><h2 style="background-color:light-dark(red, green)">b</h2></body></html>`, ``)
+	if c := r.Style(d.Find("h1")).Color(PBackgroundColor); c.G == 0 {
+		t.Errorf("light-dark() in dark scheme: %v", c)
+	}
+	if c := r.Style(d.Find("h2")).Color(PBackgroundColor); c.R != 1 {
+		t.Errorf("light-dark() in normal scheme: %v", c)
 	}
 }

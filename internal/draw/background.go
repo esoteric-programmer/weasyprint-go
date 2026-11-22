@@ -215,6 +215,7 @@ func (cv *canvas) drawBackgroundStyle(s *css.Style, b *layout.Box, area *rect, p
 		cv.c.Save()
 		pathRounded(cv.c, clip, radii)
 		cv.c.Clip()
+		cv.orientation = layout.Orientation(s)
 		cv.drawImageLayer(im, origin, clip, layerValue(repeats, i), layerValue(positions, i), layerValue(sizes, i))
 		cv.c.Restore()
 	}

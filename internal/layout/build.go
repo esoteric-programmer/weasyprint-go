@@ -382,7 +382,7 @@ func (b *Builder) replacedFor(e *html.Node, style *css.Style, src string) *Box {
 		return nil
 	}
 	url := fetch.Resolve(b.BaseURL, src)
-	im := b.Images.Get(url)
+	im := b.Images.GetOriented(url, Orientation(style))
 	if im == nil {
 		return nil
 	}
@@ -529,7 +529,7 @@ func (b *Builder) markerBox(e *html.Node, liStyle *css.Style) *Box {
 		return nil
 	} else {
 		if u, ok := liStyle.Get(css.PListStyleImage).(css.URL); ok && b.Images != nil {
-			if im := b.Images.Get(string(u)); im != nil {
+			if im := b.Images.GetOriented(string(u), Orientation(liStyle)); im != nil {
 				r := &Box{Kind: KReplaced, Style: b.R.AnonymousStyle(style), Image: im, IsInline: true, Anonymous: true}
 				children = append(children, r)
 			}
@@ -632,7 +632,7 @@ func (b *Builder) contentBoxes(style *css.Style, items []css.ContentItem, e *htm
 		case "url":
 			flush()
 			if b.Images != nil {
-				if im := b.Images.Get(it.Str); im != nil {
+				if im := b.Images.GetOriented(it.Str, Orientation(style)); im != nil {
 					out = append(out, &Box{Kind: KReplaced, Style: b.R.AnonymousStyle(style), Image: im, IsInline: true, Anonymous: true})
 				}
 			}
@@ -864,4 +864,17 @@ func quotesForLang(lang string) langQuote {
 		}
 	}
 	return defaultQuotes
+}
+
+// Orientation returns the image orientation of a style.
+func Orientation(style *css.Style) images.Orientation {
+	switch v := style.Get(css.PImageOrientation).(type) {
+	case css.ImageOrientation:
+		return images.Orientation{Angle: v.Angle, Flip: v.Flip}
+	case css.Keyword:
+		if v == "from-image" {
+			return images.Orientation{FromImage: true}
+		}
+	}
+	return images.Orientation{}
 }

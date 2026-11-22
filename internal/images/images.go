@@ -36,6 +36,11 @@ type Image struct {
 
 	// Ref caches the PDF object reference once written.
 	Ref any
+
+	// exif is the EXIF orientation (0 if none).
+	exif int
+	// oriented caches the transformed versions of the image.
+	oriented map[Orientation]*Image
 }
 
 // IntrinsicSize returns the intrinsic size in CSS px.
@@ -77,7 +82,7 @@ func Decode(data []byte, mimeType, url string) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	im := &Image{URL: url, Width: cfg.Width, Height: cfg.Height}
+	im := &Image{URL: url, Width: cfg.Width, Height: cfg.Height, exif: exifOrientation(data)}
 	if format == "jpeg" {
 		im.JPEG = data
 		switch cfg.ColorModel {
@@ -99,11 +104,22 @@ func Decode(data []byte, mimeType, url string) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
+	d, err := fromImage(img, url)
+	if err != nil {
+		return nil, err
+	}
+	d.exif = im.exif
+	return d, nil
+}
+
+// fromImage converts a decoded image to 8-bit samples.
+func fromImage(img image.Image, url string) (*Image, error) {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
 	if w == 0 || h == 0 {
 		return nil, errors.New("empty image")
 	}
+	im := &Image{URL: url, Width: w, Height: h}
 	gray := false
 	switch img.ColorModel() {
 	case color.GrayModel, color.Gray16Model:
@@ -154,6 +170,29 @@ type Cache struct {
 // NewCache returns an image cache.
 func NewCache(f fetch.Fetcher) *Cache {
 	return &Cache{images: map[string]*Image{}, failed: map[string]bool{}, Fetcher: f}
+}
+
+// GetOriented returns the image at url transformed by an orientation, or
+// nil if it cannot be loaded.
+func (c *Cache) GetOriented(url string, o Orientation) *Image {
+	im := c.Get(url)
+	if im == nil || (!o.FromImage && o.Angle == 0 && !o.Flip) {
+		return im
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, ok := im.oriented[o]; ok {
+		return r
+	}
+	if im.oriented == nil {
+		im.oriented = map[Orientation]*Image{}
+	}
+	r := im.Oriented(o)
+	if r != im && im.SVG == nil {
+		r.exif = 0
+	}
+	im.oriented[o] = r
+	return r
 }
 
 // Get returns the image at url, or nil if it cannot be loaded.

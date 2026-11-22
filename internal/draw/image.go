@@ -16,7 +16,7 @@ func (cv *canvas) imageFor(url string) *images.Image {
 	if cv.r.images == nil {
 		return nil
 	}
-	return cv.r.images.Get(url)
+	return cv.r.images.GetOriented(url, cv.orientation)
 }
 
 // imageRef returns the reference of the image XObject, written at the end
