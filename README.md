@@ -183,7 +183,9 @@ linear/radial/repeating gradients (with color hints and transparency),
   `text-align` including `justify`, `text-indent`, `letter-spacing`,
   `word-spacing`, `text-transform` (full Unicode case mappings, "ß" →
   "SS", and WeasyPrint's Greek, Turkish, Azerbaijani, Lithuanian and
-  Dutch tailorings), soft hyphens, automatic hyphenation
+  Dutch tailorings; in German, "ß" → "ẞ" when the font has the capital
+  sharp s, also for emulated small caps), soft hyphens, automatic
+  hyphenation
   (`hyphens: auto` with the `lang` attribute, `hyphenate-character`,
   `hyphenate-limit-chars`, `hyphenate-limit-zone`; LaTeX's patterns for
   about 70 languages are built in, see below), `overflow-wrap`,
@@ -333,6 +335,12 @@ precomposed letter the preferred font can draw decomposed) is drawn with
 a single font when one can draw it whole: Pango chooses a font for each
 character, so that WeasyPrint draws marks missing from the base's font
 as spacing characters next to it.
+
+German text uses the capital sharp s "ẞ" (U+1E9E, part of German
+orthography since 2017) for "ß" in uppercase and emulated small caps when
+the primary font has the glyph; WeasyPrint, like Unicode's case mapping
+and browsers, always writes "SS". Fonts without "ẞ" and other languages
+get "SS" here too.
 
 Hyphenation differs on purpose. WeasyPrint uses the Hunspell patterns of
 Pyphen for every language; here languages use TeX's patterns from

@@ -8,6 +8,7 @@ import (
 	"github.com/esoteric-programmer/weasyprint-go/internal/fetch"
 	"github.com/esoteric-programmer/weasyprint-go/internal/html"
 	"github.com/esoteric-programmer/weasyprint-go/internal/images"
+	"github.com/esoteric-programmer/weasyprint-go/internal/text"
 )
 
 // Builder builds the box tree.
@@ -24,6 +25,9 @@ type Builder struct {
 	// UsesTargets is set if target-counter()/target-text() is used.
 	UsesTargets bool
 	AnchorText  map[string]map[string]string
+
+	// Shaper, if set, tells whether fonts have the capital sharp s.
+	Shaper *text.Shaper
 
 	// HasFootnotes is set when the document has float: footnote elements.
 	HasFootnotes bool
@@ -717,7 +721,7 @@ func (b *Builder) textBoxes(s string, style *css.Style) []*Box {
 		return nil
 	}
 	raw := s
-	s = transformText(s, style.Kw(css.PTextTransform), langCode(style))
+	s = transformText(s, style.Kw(css.PTextTransform), langCode(style), capitalSharpS(b.Shaper, style))
 	if s == raw {
 		raw = ""
 	}

@@ -513,6 +513,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	}
 	builder := layout.NewBuilder(resolver, imgs, h.BaseURL)
 	builder.Warn = warn
+	builder.Shaper = shaper
 	root := builder.Build(h.root)
 	ctx := layout.NewContext(shaper, resolver, imgs, builder)
 	ctx.Warn = warn

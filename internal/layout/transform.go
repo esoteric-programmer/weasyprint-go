@@ -5,6 +5,7 @@ import (
 	"unicode"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
+	"github.com/esoteric-programmer/weasyprint-go/internal/text"
 	"github.com/esoteric-programmer/weasyprint-go/internal/unorm"
 )
 
@@ -22,9 +23,15 @@ func langCode(s *css.Style) string {
 // transformText applies text-transform t to s, with the full Unicode case
 // mappings and WeasyPrint's language tailorings (Greek, Turkish,
 // Azerbaijani, Lithuanian, Dutch).
-func transformText(s, t, lang string) string {
+//
+// capitalSharpS: German "ß" is uppercased to the capital "ẞ" (the font
+// has it) instead of "SS".
+func transformText(s, t, lang string, capitalSharpS bool) string {
 	switch t {
 	case "uppercase":
+		if lang == "de" && capitalSharpS {
+			s = strings.ReplaceAll(s, "ß", "ẞ")
+		}
 		return upperLang(s, lang)
 	case "lowercase":
 		switch lang {
@@ -77,6 +84,15 @@ func transformText(s, t, lang string) string {
 		return string(rs)
 	}
 	return s
+}
+
+// capitalSharpS reports whether "ß" is uppercased to "ẞ" for a style:
+// in German, when the style's primary font has the capital sharp s.
+func capitalSharpS(sh *text.Shaper, s *css.Style) bool {
+	if sh == nil || s.Kw(css.PTextTransform) != "uppercase" || langCode(s) != "de" {
+		return false
+	}
+	return sh.PrimaryHasRune(SpecFor(s), 'ẞ')
 }
 
 // greekDiphthongs are uppercased with a diaeresis keeping them apart.

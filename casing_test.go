@@ -75,3 +75,41 @@ func TestSmallCapsEmulation(t *testing.T) {
 		}
 	}
 }
+
+func TestCapitalSharpS(t *testing.T) {
+	// German uses "ẞ" when the font has it (DejaVu Sans), "SS" otherwise
+	// (Anonymous Pro) and in other languages.
+	doc, _ := render(t, `<style>p{font:14px 'DejaVu Sans';text-transform:uppercase}</style>
+<p lang=de>Straße</p>
+<p lang=de-AT style="font-family:'Anonymous Pro'">Straße</p>
+<p lang=en>Straße</p>
+<p lang=de style="text-transform:none">Straße</p>`, nil)
+	want := []string{"STRAẞE", "STRASSE", "STRASSE", "Straße"}
+	got := texts(doc)
+	if len(got) != len(want) {
+		t.Fatalf("got %d paragraphs", len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("paragraph %d: %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Emulated small caps.
+	for _, c := range []struct {
+		lang   string
+		glyphs int
+	}{{"de", 4}, {"en", 5}} {
+		doc, _ = render(t, `<p lang=`+c.lang+` style="font:20px 'DejaVu Sans';font-variant-caps:small-caps">Maße</p>`, nil)
+		n := 0
+		for _, p := range doc.pages {
+			p.Box.Descendants(func(b *layout.Box) {
+				if b.Kind == layout.KText && b.Shaped != nil {
+					n += len(b.Shaped.Glyphs)
+				}
+			})
+		}
+		if n != c.glyphs {
+			t.Errorf("small caps in %s: %d glyphs, want %d", c.lang, n, c.glyphs)
+		}
+	}
+}

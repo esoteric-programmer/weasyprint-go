@@ -337,6 +337,13 @@ func (s *Shaper) CharRatio(spec Spec, unit string) float64 {
 	return r
 }
 
+// PrimaryHasRune reports whether the primary font of a spec (the first
+// available face for the script of its language) has a glyph for r.
+func (s *Shaper) PrimaryHasRune(spec Spec, r rune) bool {
+	f := firstLoaded(s.facesForScript(spec, langScript(spec.Lang)))
+	return f != nil && f.Font.HasRune(r)
+}
+
 // StrutMetrics returns the metrics of the strut (the layout of a space,
 // as WeasyPrint measures it): the primary metrics, scaled down when small
 // caps are emulated, as Pango scales the font of the space (except for

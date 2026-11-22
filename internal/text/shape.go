@@ -2,6 +2,7 @@ package text
 
 import (
 	"math"
+	"strings"
 	"unicode"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/bidi"
@@ -259,6 +260,7 @@ func (s *Shaper) shapeRuns(sh *Shaped, runeFace []*fonts.Face, levels []uint8, r
 		return caps != "" && f != nil && getCaps(f, runScript[i], level(i)%2 == 1).emulated
 	}
 	var mapped map[int][]rune // expanded case mappings, by rune index
+	german := isGerman(spec.Lang)
 	small := make([]bool, n)
 	lower := make([]bool, n) // segment of lowercase letters
 	shapeText := make([]rune, n)
@@ -284,6 +286,10 @@ func (s *Shaper) shapeRuns(sh *Shaped, runeFace []*fonts.Face, levels []uint8, r
 			continue
 		}
 		up := []rune(unorm.UpperRune(r))
+		if r == 'ß' && german && runeFace[i].Font.HasRune('ẞ') {
+			// German uses the capital sharp s when the font has it.
+			up = []rune{'ẞ'}
+		}
 		ok := true
 		for _, u := range up {
 			ok = ok && runeFace[i].Font.HasRune(u)
@@ -542,6 +548,12 @@ func (s *Shaper) positionForeignMarks(runes []rune, gl []Glyph) {
 
 // capsEmulated reports whether font-variant-caps is emulated for a face
 // (the font lacks the OpenType features).
+// isGerman reports whether a language tag is German ("de", "de-DE"...).
+func isGerman(lang string) bool {
+	l := strings.ToLower(lang)
+	return l == "de" || strings.HasPrefix(l, "de-") || strings.HasPrefix(l, "de_")
+}
+
 // capsSpace reports whether r goes with the previous character in caps
 // emulation (Pango's consider_as_space).
 func capsSpace(r rune) bool {
