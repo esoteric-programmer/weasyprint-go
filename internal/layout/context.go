@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
+	"github.com/esoteric-programmer/weasyprint-go/internal/hyphen"
 	"github.com/esoteric-programmer/weasyprint-go/internal/images"
 	"github.com/esoteric-programmer/weasyprint-go/internal/text"
 )
@@ -29,6 +30,8 @@ type Context struct {
 	// DefaultPageSize is the page size used when @page size is auto
 	// (A4 if zero).
 	DefaultPageSize [2]float64
+	// Hyphenation selects the hyphenation patterns of German and English.
+	Hyphenation hyphen.Source
 
 	// Block formatting contexts: stack of excluded shapes (floats).
 	excluded    []*Box

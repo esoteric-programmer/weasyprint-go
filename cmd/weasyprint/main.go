@@ -88,6 +88,7 @@ func main() {
 	fullFonts := c.boolean("", "full-fonts", "embed unmodified font files when possible")
 	hinting := c.boolean("", "hinting", "keep hinting information in embedded fonts")
 	cache := c.str("c", "cache-folder", "", "store remote resources in a folder to reuse them in later renderings")
+	hyphenation := c.str("", "hyphenation", "tex", "hyphenation patterns for German and English: tex (TeX's, the default)\nor pyphen (the Hunspell patterns used by WeasyPrint)")
 	pageSize := c.str("", "page-size", "", "page size of all pages, overriding the document's CSS\n(\"A4\", \"A5 landscape\", \"letter\", \"210mm 297mm\"...)")
 	// Input.
 	encoding := c.str("e", "encoding", "", "character encoding of the input")
@@ -216,6 +217,13 @@ func main() {
 		// Like a user stylesheet setting the size of all pages.
 		opts.Stylesheets = append(opts.Stylesheets,
 			weasyprint.CSSFromString("@page { size: "+*pageSize+" !important }", ""))
+	}
+	switch strings.ToLower(*hyphenation) {
+	case "tex":
+	case "pyphen":
+		opts.Hyphenation = weasyprint.HyphenationPyphen
+	default:
+		fail(2, fmt.Sprintf("invalid --hyphenation %q (choose from tex, pyphen)", *hyphenation))
 	}
 	// PDF options.
 	po := &opts.PDFOptions

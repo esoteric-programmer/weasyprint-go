@@ -1,9 +1,14 @@
-// Package hyphen implements automatic hyphenation with Liang's algorithm
-// and the Hunspell/LibreOffice hyphenation patterns shipped by Pyphen,
-// which WeasyPrint uses for "hyphens: auto".
+// Package hyphen implements automatic hyphenation with Liang's algorithm.
 //
-// The dictionaries in the dictionaries directory come from Pyphen,
-// converted to UTF-8; each keeps its own license (see the README files).
+// German and English use the TeX hyphenation patterns of hyph-utf8 (for
+// German the experimental patterns of dehyph-exptl, which babel loads as
+// "ngerman-x-latest"), with TeX's exception lists and minimum fragment
+// lengths. Other languages use the Hunspell/LibreOffice patterns shipped by
+// Pyphen, which WeasyPrint uses for "hyphens: auto"; Pyphen can also be
+// chosen for German and English to hyphenate exactly like WeasyPrint.
+//
+// The pattern files keep their own licenses: see dictionaries/README.md
+// and tex/README.md.
 package hyphen
 
 import (
@@ -19,8 +24,18 @@ import (
 	"unicode"
 )
 
-//go:embed dictionaries/*.dic.gz
+//go:embed dictionaries/*.dic.gz tex/*.txt.gz
 var dictFS embed.FS
+
+// Source selects the hyphenation patterns of German and English.
+type Source int
+
+const (
+	// TeX uses the TeX patterns (the default).
+	TeX Source = iota
+	// Pyphen uses the Hunspell patterns of Pyphen, like WeasyPrint.
+	Pyphen
+)
 
 var (
 	langOnce  sync.Once
@@ -50,11 +65,12 @@ func loadLanguages() {
 	}
 }
 
-// LanguageFallback returns the dictionary key for a language tag using
-// truncation inheritance ("de-AT-1996" → "de_at"), or "" if none matches.
+// LanguageFallback returns the Pyphen dictionary key for a language tag
+// using truncation inheritance ("de-AT-1996" → "de_at"), or "" if none
+// matches.
 func LanguageFallback(lang string) string {
 	langOnce.Do(loadLanguages)
-	parts := strings.Split(strings.ToLower(strings.ReplaceAll(lang, "-", "_")), "_")
+	parts := splitTag(lang)
 	for len(parts) > 0 {
 		l := strings.Join(parts, "_")
 		if _, ok := languages[l]; ok {
@@ -65,19 +81,82 @@ func LanguageFallback(lang string) string {
 	return ""
 }
 
-// ForLang returns the hyphenation dictionary for a language tag, or nil.
+func splitTag(lang string) []string {
+	return strings.Split(strings.ToLower(strings.ReplaceAll(lang, "-", "_")), "_")
+}
+
+// texPatterns returns the TeX pattern set of a language tag and its
+// minimum fragment lengths (TeX's \lefthyphenmin and \righthyphenmin), or
+// "" for languages without TeX patterns.
+func texPatterns(lang string) (string, int, int) {
+	parts := splitTag(lang)
+	switch parts[0] {
+	case "de":
+		traditional, swiss := false, false
+		for _, p := range parts[1:] {
+			switch p {
+			case "1901":
+				traditional = true
+			case "ch", "li":
+				swiss = true
+			}
+		}
+		switch {
+		case traditional && swiss:
+			return "hyph-de-ch-1901", 2, 2
+		case traditional:
+			return "hyph-de-1901", 2, 2
+		}
+		return "hyph-de-1996", 2, 2
+	case "en":
+		// babel's british, australian and newzealand use the British
+		// patterns; other varieties the American ones.
+		for _, p := range parts[1:] {
+			switch p {
+			case "gb", "uk", "au", "nz", "ie", "za", "in":
+				return "hyph-en-gb", 2, 3
+			}
+		}
+		return "hyph-en-us", 2, 3
+	}
+	return "", 0, 0
+}
+
+// ForLang returns the default hyphenation dictionary for a language tag,
+// or nil.
 func ForLang(lang string) *Dict {
+	return Lookup(lang, TeX)
+}
+
+// Lookup returns the hyphenation dictionary for a language tag, using the
+// given patterns for German and English, or nil.
+func Lookup(lang string, src Source) *Dict {
+	if src == TeX {
+		if file, left, right := texPatterns(lang); file != "" {
+			return cached("tex/"+file+".txt.gz", func(d *Dict) {
+				d.Left, d.Right, d.MinWord = left, right, left+right
+			})
+		}
+	}
 	key := LanguageFallback(lang)
 	if key == "" {
 		return nil
 	}
-	file := languages[key]
+	return cached("dictionaries/"+languages[key], func(d *Dict) {
+		d.Left, d.Right, d.MinWord = 2, 2, 5
+	})
+}
+
+func cached(file string, init func(*Dict)) *Dict {
 	dictMu.Lock()
 	defer dictMu.Unlock()
 	if d, ok := dicts[file]; ok {
 		return d
 	}
-	d := loadDict(file)
+	d := loadDict(file, strings.HasPrefix(file, "dictionaries/"))
+	if d != nil {
+		init(d)
+	}
 	dicts[file] = d
 	return d
 }
@@ -89,15 +168,21 @@ type pattern struct {
 
 // Dict holds the hyphenation patterns of one language.
 type Dict struct {
-	patterns map[string]pattern
-	maxLen   int
-	mu       sync.Mutex
-	cache    map[string][]int
+	// Left and Right are the default minimum numbers of letters before
+	// and after a hyphen, MinWord the default minimum word length (used
+	// for "hyphenate-limit-chars: auto").
+	Left, Right, MinWord int
+
+	patterns   map[string]pattern
+	exceptions map[string][]int
+	maxLen     int
+	mu         sync.Mutex
+	cache      map[string][]int
 }
 
-func loadDict(file string) *Dict {
+func loadDict(file string, hunspell bool) *Dict {
 	d := &Dict{patterns: map[string]pattern{}, cache: map[string][]int{}}
-	f, err := dictFS.Open("dictionaries/" + file)
+	f, err := dictFS.Open(file)
 	if err != nil {
 		return nil
 	}
@@ -112,14 +197,24 @@ func loadDict(file string) *Dict {
 	}
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
-	first := true
+	// The first line of Hunspell dictionaries is their encoding.
+	first := hunspell
+	exceptions := false
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if first {
 			first = false
 			continue
 		}
+		if !hunspell && line == "%exceptions" {
+			exceptions = true
+			continue
+		}
 		if line == "" || ignored(line) {
+			continue
+		}
+		if exceptions {
+			d.addException(line)
 			continue
 		}
 		line = parseHex(line)
@@ -185,6 +280,24 @@ func loadDict(file string) *Dict {
 	return d
 }
 
+// addException adds a word of a TeX exception list ("as-so-ciate"); a
+// word without hyphens is never hyphenated.
+func (d *Dict) addException(line string) {
+	if d.exceptions == nil {
+		d.exceptions = map[string][]int{}
+	}
+	var word []rune
+	pts := []int{}
+	for _, r := range line {
+		if r == '-' {
+			pts = append(pts, len(word))
+			continue
+		}
+		word = append(word, unicode.ToLower(r))
+	}
+	d.exceptions[string(word)] = pts
+}
+
 func tagsNoZero(tags []rune) []rune {
 	if len(tags) > 0 && tags[len(tags)-1] == 0 {
 		return tags[:len(tags)-1]
@@ -223,6 +336,9 @@ func parseHex(s string) string {
 // points returns the hyphenation points of a word (rune offsets).
 func (d *Dict) points(word string) []int {
 	word = strings.ToLower(word)
+	if p, ok := d.exceptions[word]; ok {
+		return p
+	}
 	d.mu.Lock()
 	if p, ok := d.cache[word]; ok {
 		d.mu.Unlock()
@@ -272,6 +388,24 @@ func (d *Dict) Positions(word string, left, right int) []int {
 		}
 	}
 	return out
+}
+
+// Hyphenate returns word with hyphens at its hyphenation points, using
+// the dictionary's default limits (for tests and debugging).
+func (d *Dict) Hyphenate(word string) string {
+	runes := []rune(word)
+	if len(runes) < d.MinWord {
+		return word
+	}
+	var b strings.Builder
+	last := 0
+	for _, p := range d.Positions(word, d.Left, d.Right) {
+		b.WriteString(string(runes[last:p]))
+		b.WriteByte('-')
+		last = p
+	}
+	b.WriteString(string(runes[last:]))
+	return b.String()
 }
 
 // IsWordRune reports whether r is part of a hyphenatable word.

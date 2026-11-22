@@ -231,7 +231,7 @@ func (c *Context) flatten(line *Box) *flatLine {
 				}
 			}
 			if it.wrap && it.box.Style.Kw(css.PHyphens) == "auto" {
-				addAutoHyphens(it)
+				c.addAutoHyphens(it)
 			}
 			prevWrap = it.wrap
 		} else {
@@ -450,20 +450,25 @@ func inlineEndEdge(b *Box, cbW float64) float64 {
 }
 
 // addAutoHyphens adds hyphenation opportunities to the words of a text
-// item, as WeasyPrint does with Pyphen for "hyphens: auto".
-func addAutoHyphens(it *flatItem) {
+// item for "hyphens: auto".
+func (c *Context) addAutoHyphens(it *flatItem) {
 	st := it.box.Style
 	lang, ok := st.Get(css.PLang).(css.Str)
 	if !ok || lang == "" {
 		return
 	}
-	dict := hyphen.ForLang(string(lang))
+	dict := hyphen.Lookup(string(lang), c.Hyphenation)
 	if dict == nil {
 		return
 	}
-	limits := css.LimitChars{5, 2, 2}
+	limits := css.LimitChars{-1, -1, -1}
 	if l, ok := st.Get(css.PHyphenateLimitChars).(css.LimitChars); ok {
 		limits = l
+	}
+	for i, def := range [3]int{dict.MinWord, dict.Left, dict.Right} {
+		if limits[i] < 0 {
+			limits[i] = def
+		}
 	}
 	runes := it.shaped.Runes
 	for i := 0; i < len(runes); {

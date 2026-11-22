@@ -31,7 +31,8 @@ weasyprint --page-size "A5 landscape" flyer.html flyer.pdf
 cat doc.html | weasyprint -u ./assets/ - - > doc.pdf
 ```
 
-Options (the same as WeasyPrint's CLI, plus `--page-size`):
+Options (the same as WeasyPrint's CLI, plus `--page-size` and
+`--hyphenation`):
 
 | Option | Meaning |
 | --- | --- |
@@ -41,6 +42,7 @@ Options (the same as WeasyPrint's CLI, plus `--page-size`):
 | `-e`, `--encoding ENC` | Input character encoding |
 | `-p`, `--presentational-hints` | Follow HTML presentational hints (`align`, `bgcolor`, `width`…) |
 | `--page-size SIZE` | Page size of all pages, overriding the document's CSS: a CSS `size` value such as `A4`, `A5 landscape`, `letter`, `210mm 297mm` (not in WeasyPrint, where `-s` with `@page { size: … }` does the same) |
+| `--hyphenation PATTERNS` | Hyphenation patterns for German and English: `tex` (default, TeX's patterns, see below) or `pyphen` (the Hunspell patterns WeasyPrint uses) |
 | `-a`, `--attachment FILE` | Attach a file to the PDF (repeatable) |
 | `--attachment-relationship REL` | Relationship of the attachment at the same position (`Source`, `Data`, `Alternative`, `Supplement`, `Unspecified`…), for PDF/A-3 |
 | `--pdf-variant VARIANT` | `pdf/a-1b`, `pdf/a-2b`, `pdf/a-3b`, `pdf/a-2u`, `pdf/a-3u`, `pdf/a-4u`, `pdf/a-1a`, `pdf/a-2a`, `pdf/a-3a`, `pdf/a-4e`, `pdf/a-4f`, `pdf/ua-1`, `pdf/ua-2`, `pdf/x-1a`, `pdf/x-3`, `pdf/x-4`, `pdf/x-5g` |
@@ -85,7 +87,9 @@ Other entry points: `HTMLFromString(source, baseURL)`, `HTMLFromBytes`,
 `HTMLFromReader`, `HTMLFromURL`, `CSSFromFile`, `CSSFromURL`.
 `Options.DefaultPageSize` sets the size of pages whose size the document
 doesn't set (A4 otherwise); `weasyprint.PageSize("A5 landscape")` converts
-a CSS page size for it.
+a CSS page size for it. `Options.Hyphenation` selects the hyphenation
+patterns of German and English (`HyphenationTeX`, the default, or
+`HyphenationPyphen`).
 `HTML.Render(opts)` returns a `*Document` with page sizes and metadata,
 which can then be written with `Document.WritePDF(w)` (or
 `WritePDFWithOptions` with other PDF options).
@@ -171,7 +175,8 @@ linear/radial/repeating gradients (with color hints and transparency),
   `word-spacing`, `text-transform`, soft hyphens, automatic hyphenation
   (`hyphens: auto` with the `lang` attribute, `hyphenate-character`,
   `hyphenate-limit-chars`, `hyphenate-limit-zone`; dictionaries for about
-  50 languages are built in), `overflow-wrap`,
+  50 languages are built in, and German and English hyphenate like LaTeX,
+  see below), `overflow-wrap`,
   `word-break`, `tab-size`, all `vertical-align` values, inline blocks,
   kerning, standard ligatures, small caps (`smcp`/`c2sc` or emulated),
   `font-language-override`.
@@ -275,6 +280,23 @@ widths, `overflow: clip`, `word-break: keep-all`,
 `:default` and `:indeterminate` selectors, the `--page-size`
 option, gzip-compressed (SVGZ) images, and WOFF2 font collections.
 
+Hyphenation of German and English differs on purpose. WeasyPrint uses the
+Hunspell patterns of Pyphen for every language; here German and English
+use TeX's patterns from hyph-utf8 by default, as LaTeX does: for German
+the experimental patterns of dehyph-exptl (2024-02-28), which babel loads
+with `\babelprovide[hyphenrules=ngerman-x-latest]{ngerman}` (reformed
+spelling for `de`, `de-DE`, `de-AT`, `de-CH`…; traditional spelling for
+`de-1901`, and the Swiss variant for `de-CH-1901`), and for English
+Knuth's and Kuiken's American patterns (`en`, `en-US`) or the British
+ones (`en-GB`, `en-AU`, `en-NZ`…) with their exception lists. They avoid
+wrong breaks such as "Urin-stinkt", "Staub-ecken" or "Druck-e-r-zeug-nis"
+(ambiguous compound joints are not hyphenated at all, like in LaTeX). With
+`hyphenate-limit-chars: auto` (the default), TeX's minimum fragment
+lengths are used: 2 letters before and after the hyphen in German, 2
+before and 3 after in English, with no other minimum word length (Pyphen
+uses 5 letters per word, 2 before and 2 after). `--hyphenation pyphen`
+(`Options.Hyphenation`) restores WeasyPrint's hyphenation.
+
 The output was compared with WeasyPrint 70 page by page. The remaining
 differences come from WeasyPrint bugs that are intentionally not
 reproduced:
@@ -361,7 +383,7 @@ reproduced:
 | `internal/css` | Tokenizer, parser, selectors, cascade, computed values, counter styles, UA stylesheet | `css/`, tinycss2, cssselect2 |
 | `internal/fonts` | OpenType parsing, system font library and matching, TrueType/CFF subsetting | fontconfig, fontTools |
 | `internal/text` | Shaping (cmap, kerning, ligatures, fallback) and line break opportunities | Pango, HarfBuzz |
-| `internal/hyphen` | Hyphenation patterns (Liang's algorithm) | Pyphen |
+| `internal/hyphen` | Hyphenation patterns (Liang's algorithm, TeX and Hunspell patterns) | Pyphen |
 | `internal/bidi` | Unicode bidirectional algorithm and Arabic joining data | FriBidi |
 | `internal/layout` | Box generation and anonymous boxes, block/inline/float/table/flex/grid/column/absolute/page layout | `formatting_structure/`, `layout/` |
 | `internal/draw` | Painting order, backgrounds, borders, text, images, SVG, links and bookmarks | `draw/`, `svg/`, `pdf/` |
@@ -385,7 +407,10 @@ stylesheets in `internal/css/ua` come from WeasyPrint (see
 WeasyPrint's implementation. The hyphenation dictionaries in
 `internal/hyphen/dictionaries` come from Pyphen (LibreOffice/Hunspell
 patterns) and keep their own licenses, given in the README files next to
-them (mostly LGPL/MPL/GPL tri-licenses). The VP8 and VP8L decoders in
+them (mostly LGPL/MPL/GPL tri-licenses); the TeX patterns in
+`internal/hyphen/tex` come from hyph-utf8 and dehyph-exptl (MIT, and a
+permissive notice for American English; see `internal/hyphen/tex/README.md`
+and the header files there). The VP8 and VP8L decoders in
 `internal/images/vp8` and `internal/images/vp8l` come from
 golang.org/x/image (BSD 3-Clause, The Go Authors), and the sRGB profile
 in `internal/draw` is the International Color Consortium's

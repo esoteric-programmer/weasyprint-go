@@ -25,6 +25,7 @@ import (
 	"github.com/esoteric-programmer/weasyprint-go/internal/fetch"
 	"github.com/esoteric-programmer/weasyprint-go/internal/fonts"
 	"github.com/esoteric-programmer/weasyprint-go/internal/html"
+	"github.com/esoteric-programmer/weasyprint-go/internal/hyphen"
 	"github.com/esoteric-programmer/weasyprint-go/internal/images"
 	"github.com/esoteric-programmer/weasyprint-go/internal/layout"
 	"github.com/esoteric-programmer/weasyprint-go/internal/text"
@@ -172,9 +173,25 @@ type Options struct {
 	// DefaultPageSize is the page size in CSS px of pages whose size the
 	// document's CSS doesn't set (default A4). See PageSize.
 	DefaultPageSize [2]float64
+	// Hyphenation selects the hyphenation patterns used by "hyphens:
+	// auto" for German and English.
+	Hyphenation Hyphenation
 	// PDFOptions are used when writing the document as PDF.
 	PDFOptions
 }
+
+// Hyphenation selects hyphenation patterns.
+type Hyphenation int
+
+const (
+	// HyphenationTeX uses TeX's hyphenation patterns, exceptions and
+	// minimum fragment lengths for German and English (for German the
+	// experimental patterns of dehyph-exptl, babel's "ngerman-x-latest").
+	HyphenationTeX Hyphenation = iota
+	// HyphenationPyphen uses the Hunspell patterns of Pyphen, like
+	// WeasyPrint.
+	HyphenationPyphen
+)
 
 // PageSize parses a CSS page size such as "A4", "A5 landscape", "letter"
 // or "210mm 297mm" (the values of the @page size descriptor) into CSS px,
@@ -428,6 +445,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	ctx := layout.NewContext(shaper, resolver, imgs, builder)
 	ctx.Warn = warn
 	ctx.DefaultPageSize = defaultSize
+	ctx.Hyphenation = hyphen.Source(opts.Hyphenation)
 	// Viewport units are relative to the first page size.
 	if w, hh := ctx.FirstPageSize(root); w != resolver.Viewport[0] || hh != resolver.Viewport[1] {
 		resolver.Viewport = [2]float64{w, hh}
@@ -436,6 +454,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 		ctx = layout.NewContext(shaper, resolver, imgs, builder)
 		ctx.Warn = warn
 		ctx.DefaultPageSize = defaultSize
+		ctx.Hyphenation = hyphen.Source(opts.Hyphenation)
 	}
 	pages := ctx.LayoutDocument(root)
 	if builder.UsesTargets {
@@ -445,6 +464,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 		ctx = layout.NewContext(shaper, resolver, imgs, builder)
 		ctx.Warn = warn
 		ctx.DefaultPageSize = defaultSize
+		ctx.Hyphenation = hyphen.Source(opts.Hyphenation)
 		pages = ctx.LayoutDocument(root)
 	}
 	if os.Getenv("WEASYPRINT_GO_DEBUG") != "" {

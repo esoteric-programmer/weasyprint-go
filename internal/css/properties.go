@@ -1088,7 +1088,8 @@ func parseHyphenateCharacter(ts []Token, _ *ParseCtx) Value {
 }
 
 // LimitChars is the computed value of hyphenate-limit-chars: minimum
-// word length, and minimum characters before and after the hyphen.
+// word length, and minimum characters before and after the hyphen; -1
+// stands for auto (the defaults of the hyphenation patterns).
 type LimitChars [3]int
 
 func parseHyphenateLimitChars(ts []Token, _ *ParseCtx) Value {
@@ -1096,12 +1097,11 @@ func parseHyphenateLimitChars(ts []Token, _ *ParseCtx) Value {
 	if len(ts) == 0 || len(ts) > 3 {
 		return nil
 	}
-	defaults := []int{5, 2, 2}
 	var vals []int
-	for i, t := range ts {
+	for _, t := range ts {
 		switch {
 		case t.IsIdent("auto"):
-			vals = append(vals, defaults[i])
+			vals = append(vals, -1)
 		case t.Type == TNumber && t.IsInt:
 			vals = append(vals, int(t.Num))
 		default:
@@ -1110,7 +1110,7 @@ func parseHyphenateLimitChars(ts []Token, _ *ParseCtx) Value {
 	}
 	switch len(vals) {
 	case 1:
-		return LimitChars{vals[0], 2, 2}
+		return LimitChars{vals[0], -1, -1}
 	case 2:
 		return LimitChars{vals[0], vals[1], vals[1]}
 	}
@@ -1224,7 +1224,7 @@ var (
 	PWordBreak               = def("word-break", true, Keyword("normal"), kw("normal", "break-all", "keep-all", "break-word"))
 	PTabSize                 = def("tab-size", true, Number(8), parseTabSize)
 	PHyphenateLimitZone      = def("hyphenate-limit-zone", true, Px(0), lengthKw(false, true))
-	PHyphenateLimitChars     = def("hyphenate-limit-chars", true, LimitChars{5, 2, 2}, parseHyphenateLimitChars)
+	PHyphenateLimitChars     = def("hyphenate-limit-chars", true, LimitChars{-1, -1, -1}, parseHyphenateLimitChars)
 	PLang                    = def("lang", true, Keyword("none"), func(ts []Token, _ *ParseCtx) Value {
 		if t, ok := single(ts); ok && t.Type == TString {
 			return Str(t.Value)
