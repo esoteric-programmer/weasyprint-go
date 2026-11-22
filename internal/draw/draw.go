@@ -573,7 +573,10 @@ func (cv *canvas) useColorSpace(name string) {
 
 func (cv *canvas) pushGroup() {
 	cv.stack = append(cv.stack, cv.c)
+	parent := cv.c
 	cv.c = pdf.NewContent(cv.r.opts.Compress)
+	// Groups are drawn where they are created.
+	cv.c.SetBaseCTM(parent.CTM())
 }
 
 func (cv *canvas) popGroup(bbox [4]float64) string {

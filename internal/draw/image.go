@@ -40,12 +40,18 @@ func (r *Renderer) imageRef(im *images.Image, interpolate bool) pdf.Ref {
 
 // useImageAt records the size an image is drawn at, for the maximum
 // resolution (dpi option).
-func (r *Renderer) useImageAt(im *images.Image, w, h float64) {
+func (r *Renderer) useImageAt(im *images.Image, w, h float64, ctm [6]float64) {
 	ratio := 1.0
 	if r.opts.DPI > 0 && w > 0 && h > 0 {
-		dpi := math.Max(float64(im.Width)/(w/96), float64(im.Height)/(h/96))
-		if dpi > r.opts.DPI {
-			ratio = r.opts.DPI / dpi
+		// Size on the page, in inches (the CTM is in points), so that
+		// transforms and SVG scaling count.
+		wi := math.Hypot(ctm[0]*w, ctm[1]*w) / 72
+		hi := math.Hypot(ctm[2]*h, ctm[3]*h) / 72
+		if wi > 0 && hi > 0 {
+			dpi := math.Max(float64(im.Width)/wi, float64(im.Height)/hi)
+			if dpi > r.opts.DPI {
+				ratio = r.opts.DPI / dpi
+			}
 		}
 	}
 	if ratio > r.imgRatio[im] {
@@ -70,6 +76,7 @@ func (r *Renderer) writeImages() {
 func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64) *pdf.Stream {
 	width, height := im.Width, im.Height
 	pixels, alpha, jpegData := im.Pixels, im.Alpha, im.JPEG
+	comps, invert := im.Components, im.InvertCMYK
 	quality := r.opts.JPEGQuality
 	if ratio < 1 || (jpegData != nil && quality > 0) {
 		if jpegData != nil {
@@ -79,14 +86,19 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 				}
 				if data, w, h, ok := reencodeJPEG(jpegData, ratio, q); ok {
 					jpegData, width, height = data, w, h
+					if comps == 4 {
+						// The JPEG encoder writes CMYK images as RGB.
+						comps, invert = 3, false
+					}
 				}
 			}
 		} else if ratio < 1 {
 			w := max(1, int(math.Round(float64(width)*ratio)))
 			h := max(1, int(math.Round(float64(height)*ratio)))
-			pixels = images.Resample(pixels, im.Components, width, height, w, h)
 			if alpha != nil {
-				alpha = images.Resample(alpha, 1, width, height, w, h)
+				pixels, alpha = images.ResampleAlpha(pixels, im.Components, alpha, width, height, w, h)
+			} else {
+				pixels = images.Resample(pixels, im.Components, width, height, w, h)
 			}
 			width, height = w, h
 		}
@@ -102,7 +114,7 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 		d["Interpolate"] = true
 	}
 	cs := pdf.Name("DeviceRGB")
-	switch im.Components {
+	switch comps {
 	case 1:
 		cs = pdf.Name("DeviceGray")
 	case 4:
@@ -111,7 +123,7 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 	d["ColorSpace"] = cs
 	if jpegData != nil {
 		d["Filter"] = pdf.Name("DCTDecode")
-		if im.InvertCMYK {
+		if invert {
 			d["Decode"] = []float64{1, 0, 1, 0, 1, 0, 1, 0}
 		}
 		return &pdf.Stream{Dict: d, Data: jpegData}
@@ -247,7 +259,7 @@ func (cv *canvas) paintImage(im *images.Image, x, y, w, h float64) {
 		return
 	}
 	ref := cv.r.imageRef(im, true)
-	cv.r.useImageAt(im, w, h)
+	cv.r.useImageAt(im, w, h, cv.c.CTM())
 	name := fmt.Sprintf("Im%d", int(ref))
 	cv.xobjects[name] = ref
 	cv.c.Save()

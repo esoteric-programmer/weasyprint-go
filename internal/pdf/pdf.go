@@ -396,6 +396,34 @@ type Content struct {
 	bytes.Buffer
 	Dict     Dict
 	Compress bool
+	ctm      [6]float64 // current transformation matrix, relative to base
+	ctmSet   bool
+	ctmStack [][6]float64
+}
+
+var identity = [6]float64{1, 0, 0, 1, 0, 0}
+
+// CTM returns the current transformation matrix (a, b, c, d, e, f) of the
+// stream, including the base set by SetBaseCTM.
+func (c *Content) CTM() [6]float64 {
+	if !c.ctmSet {
+		return identity
+	}
+	return c.ctm
+}
+
+// SetBaseCTM sets the matrix the stream is drawn with (for form XObjects
+// drawn in another stream).
+func (c *Content) SetBaseCTM(m [6]float64) {
+	c.ctm, c.ctmSet = m, true
+}
+
+func mulMatrix(m, n [6]float64) [6]float64 {
+	return [6]float64{
+		m[0]*n[0] + m[1]*n[2], m[0]*n[1] + m[1]*n[3],
+		m[2]*n[0] + m[3]*n[2], m[2]*n[1] + m[3]*n[3],
+		m[4]*n[0] + m[5]*n[2] + n[4], m[4]*n[1] + m[5]*n[3] + n[5],
+	}
 }
 
 // NewContent returns an empty content stream.
@@ -415,11 +443,24 @@ func (c *Content) nums(ops string, fs ...float64) {
 // Op writes a raw operator.
 func (c *Content) Op(s string) { c.WriteString(s); c.WriteByte('\n') }
 
-func (c *Content) Save()    { c.Op("q") }
-func (c *Content) Restore() { c.Op("Q") }
+func (c *Content) Save() {
+	c.ctmStack = append(c.ctmStack, c.CTM())
+	c.Op("q")
+}
+
+func (c *Content) Restore() {
+	if n := len(c.ctmStack); n > 0 {
+		c.ctm, c.ctmSet = c.ctmStack[n-1], true
+		c.ctmStack = c.ctmStack[:n-1]
+	}
+	c.Op("Q")
+}
 
 // Transform concatenates a matrix to the CTM.
-func (c *Content) Transform(a, b, cc, d, e, f float64) { c.nums("cm", a, b, cc, d, e, f) }
+func (c *Content) Transform(a, b, cc, d, e, f float64) {
+	c.ctm, c.ctmSet = mulMatrix([6]float64{a, b, cc, d, e, f}, c.CTM()), true
+	c.nums("cm", a, b, cc, d, e, f)
+}
 
 func (c *Content) Rect(x, y, w, h float64) { c.nums("re", x, y, w, h) }
 func (c *Content) MoveTo(x, y float64)     { c.nums("m", x, y) }

@@ -86,3 +86,55 @@ func Scale(img image.Image, w, h int) image.Image {
 	out.Pix = Resample(n.Pix, 4, b.Dx(), b.Dy(), w, h)
 	return out
 }
+
+// ResampleAlpha scales color samples and their alpha channel together,
+// weighting colors by their opacity so that transparent pixels do not
+// bleed into visible ones.
+func ResampleAlpha(src []byte, comps int, alpha []byte, w, h, nw, nh int) ([]byte, []byte) {
+	pre := make([]byte, 0, (comps+1)*w*h)
+	for i := 0; i < w*h; i++ {
+		pre = append(pre, src[comps*i:comps*i+comps]...)
+		pre = append(pre, alpha[i])
+	}
+	// Premultiplied samples, kept at 16 bits through a float average.
+	n := comps + 1
+	out := make([]byte, comps*nw*nh)
+	outA := make([]byte, nw*nh)
+	sum := make([]float64, n)
+	for y := 0; y < nh; y++ {
+		y0 := float64(y) * float64(h) / float64(nh)
+		y1 := float64(y+1) * float64(h) / float64(nh)
+		for x := 0; x < nw; x++ {
+			x0 := float64(x) * float64(w) / float64(nw)
+			x1 := float64(x+1) * float64(w) / float64(nw)
+			for i := range sum {
+				sum[i] = 0
+			}
+			total := 0.0
+			for sy := int(y0); sy < h && float64(sy) < y1; sy++ {
+				wy := minF(y1, float64(sy+1)) - maxF(y0, float64(sy))
+				for sx := int(x0); sx < w && float64(sx) < x1; sx++ {
+					wt := (minF(x1, float64(sx+1)) - maxF(x0, float64(sx))) * wy
+					p := (sy*w + sx) * n
+					a := float64(pre[p+comps])
+					for c := 0; c < comps; c++ {
+						sum[c] += wt * a * float64(pre[p+c])
+					}
+					sum[comps] += wt * a
+					total += wt
+				}
+			}
+			o := y*nw + x
+			if total == 0 {
+				continue
+			}
+			outA[o] = byte(sum[comps]/total + 0.5)
+			for c := 0; c < comps; c++ {
+				if sum[comps] > 0 {
+					out[o*comps+c] = byte(minF(255, sum[c]/sum[comps]+0.5))
+				}
+			}
+		}
+	}
+	return out, outA
+}
