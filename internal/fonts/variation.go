@@ -425,7 +425,7 @@ func (f *Font) instantiate(coords []float64) (inst *Font, err error) {
 		binary.BigEndian.PutUint16(head[50:], 1)
 		tables["head"] = head
 	} else if cff2 := f.tables["CFF2"]; cff2 != nil {
-		cff, err := cff2ToCFF(f, cff2, coords)
+		cff, err := cff2ToCFF(f, cff2, coords, adv)
 		if err != nil {
 			return nil, err
 		}
