@@ -292,8 +292,8 @@ here:
 * Text: the complex shapers of Indic, Southeast Asian and other scripts
   (their reordering and syllable-based features; the OpenType features
   of their fonts are applied like for simple scripts),
-  nonstandard hyphenation patterns
-  that change letters (such as the old German "ck" → "k-k").
+  hyphenation that changes letters (Hungarian "asz-szony"; see
+  "Hyphenation that changes letters" below).
 * Images: AVIF, EPS and WMF.
 * PDF: the `debug` variant (link annotations on every id).
 
@@ -363,6 +363,46 @@ uses 5 letters per word, 2 before and 2 after). `--hyphenation pyphen`
 (`Options.Hyphenation`) restores WeasyPrint's hyphenation for all
 languages.
 
+### Hyphenation that changes letters
+
+Some orthographies change the letters of a word when it is hyphenated.
+None of these changes are implemented yet: such words are only broken
+where no letter changes (or, in Pyphen mode, not at the affected joint).
+
+| Language | Change at the break | Example |
+|---|---|---|
+| Hungarian | long double digraphs (ssz, ggy, nny, tty, lly, ccs, zzs, ddz…) are written in full on both sides | asszony → asz-szony, meggyes → megy-gyes |
+| Catalan | the middle dot of "l·l" is dropped | col·lecció → col-lecció |
+| Dutch | the diaeresis is dropped; some diminutives change | ideeën → idee-en, cafeetje → café-tje |
+| Norwegian (Bokmål, Nynorsk) | a consonant dropped in compounds comes back | busstasjon → buss-stasjon |
+| Swedish | the same | glasskål → glass-skål |
+| German, traditional spelling (before 1996) | "ck" → "k-k"; a dropped third consonant comes back | Zucker → Zuk-ker, Schiffahrt → Schiff-fahrt |
+
+The reformed German spelling (`de`) has no such changes: "ck" is kept
+together ("Zu-cker") and triple consonants are always written
+("Schifffahrt"). Czech, Slovak, Polish, Portuguese and Croatian repeat a
+hyphen at the start of the next line when a line is broken at a hyphen
+("česko-" / "-slovenský"), which changes no letter and is not implemented
+either.
+
+The data available:
+
+* Pyphen's Hunspell dictionaries (and so WeasyPrint) have nonstandard
+  patterns (`pattern/replacement,start,cut`) only for Hungarian (about
+  2,700) and Catalan (2: `l·l` and `ŀl`); not for Dutch, Norwegian,
+  Swedish or German. Here, Pyphen mode skips these patterns.
+* TeX's patterns cannot change letters at all: LaTeX uses babel
+  shorthands typed in the text (`"ck`, `"ff` for traditional German) or
+  engine extensions, and hyph-utf8's Hungarian, Catalan, Dutch, Norwegian
+  and Swedish patterns only give positions. dehyph-exptl's traditional
+  German patterns (`de-1901`) therefore never break "ck".
+
+Implementing it would mean applying Pyphen's Hungarian and Catalan
+replacements (correctly, unlike WeasyPrint, see below), writing rule
+lists for Dutch, Norwegian and Swedish, and an opt-in "ck" → "k-k" for
+traditional German. The replacement also has to change the text of the
+line (and its PDF text) on both sides of the break.
+
 The output was compared with WeasyPrint 70 page by page. The remaining
 differences come from WeasyPrint bugs that are intentionally not
 reproduced:
@@ -413,6 +453,9 @@ reproduced:
 * `text-transform: capitalize` uppercases digraphs such as "ǆ" instead of
   using their titlecase form ("ǅ"; "ß" gives "Ss", not "SS").
 * The `cap` unit is the advance width of "O" instead of the cap height.
+* Hungarian hyphenation drops a letter where a long double consonant is
+  split: "asszony" is broken as "asz-" / "zony" instead of "asz-" /
+  "szony".
 * Glyph offsets (combining marks attached by GPOS, superscript
   positioning) are converted from Pango units with a factor of 1/1000
   instead of 1/1024, so marks are moved 2.4% too far from their pen
