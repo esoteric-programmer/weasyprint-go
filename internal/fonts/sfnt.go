@@ -50,6 +50,13 @@ type Font struct {
 	cmap     map[rune]uint16
 	locaLong bool
 
+	// Variable font instances: the variable font, the normalized
+	// coordinates and the GDEF variation store.
+	VarBase   *Font
+	varCoords []float64
+	gdefStore *itemVarStore
+	varMu     sync.Mutex
+
 	// Lazily parsed tables; fonts are shared between renders, so their
 	// parsing is synchronized.
 	cmapOnce sync.Once

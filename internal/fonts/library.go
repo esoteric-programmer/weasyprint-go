@@ -36,6 +36,8 @@ type FaceInfo struct {
 	userDefined  bool
 	// Features are the OpenType features of the @font-face rule.
 	Features []FeatureSetting
+	// Axes are the variation axes of variable fonts.
+	Axes []Axis
 }
 
 // FeatureSetting is an OpenType feature setting.
@@ -233,12 +235,12 @@ func indexFile(path string) (faces []*FaceInfo) {
 			toff := int(u32(dir, e+8))
 			tlen := int(u32(dir, e+12))
 			switch name {
-			case "name", "OS/2", "head":
+			case "name", "OS/2", "head", "fvar":
 				if tlen > 1<<20 {
 					continue
 				}
 				font.tables[name] = r.read(toff, tlen)
-			case "fvar", "cmap", "glyf", "CFF ":
+			case "cmap", "glyf", "CFF ":
 				font.tables[name] = nil
 				if name == "cmap" {
 					font.tabOff["cmap"] = toff
@@ -276,7 +278,7 @@ func indexFile(path string) (faces []*FaceInfo) {
 
 func newFaceInfo(path string, idx int, font *Font) *FaceInfo {
 	fi := &FaceInfo{Path: path, Index: idx, Weight: font.Weight, Italic: font.Italic,
-		Stretch: font.Stretch, Variable: font.Variable,
+		Stretch: font.Stretch, Variable: font.Variable, Axes: parseAxes(font.tables["fvar"]),
 		FullName: strings.ToLower(font.FullName), PostScript: strings.ToLower(font.PostScript)}
 	if fi.Weight < 1 || fi.Weight > 1000 {
 		fi.Weight = 400
@@ -349,7 +351,8 @@ func (l *Library) AddFontFace(family string, font *Font, weight [2]float64, styl
 	defer l.mu.Unlock()
 	w := int(weight[0])
 	fi := &FaceInfo{Families: []string{strings.ToLower(family)}, Weight: w, Italic: style == "italic" || style == "oblique",
-		Stretch: stretchValue(stretch), font: font, unicodeRange: unicodeRange, userDefined: true, Features: features}
+		Stretch: stretchValue(stretch), font: font, unicodeRange: unicodeRange, userDefined: true, Features: features,
+		Variable: font.Variable, Axes: parseAxes(font.tables["fvar"])}
 	fam := strings.ToLower(family)
 	l.user[fam] = append(l.user[fam], fi)
 }
@@ -643,6 +646,11 @@ func Select(faces []*FaceInfo, req Request) *FaceInfo {
 	}
 	cands = filterBest(cands, func(fi *FaceInfo) float64 {
 		d := fi.Stretch - req.Stretch
+		if lo, hi, ok := fi.AxisRange("wdth"); ok {
+			if p := StretchPercent(req.Stretch); p >= lo && p <= hi {
+				d = 0
+			}
+		}
 		if d == 0 {
 			return 0
 		}
@@ -662,12 +670,23 @@ func Select(faces []*FaceInfo, req Request) *FaceInfo {
 		if fi.Italic == req.Italic {
 			return 0
 		}
+		if req.Italic {
+			if _, hi, ok := fi.AxisRange("ital"); ok && hi >= 1 {
+				return 0
+			}
+			if lo, _, ok := fi.AxisRange("slnt"); ok && lo < 0 {
+				return 0
+			}
+		}
 		return 1
 	})
 	// Weight.
 	w := req.Weight
 	cands = filterBest(cands, func(fi *FaceInfo) float64 {
 		fw := fi.Weight
+		if lo, hi, ok := fi.AxisRange("wght"); ok && float64(w) >= lo && float64(w) <= hi {
+			return 0
+		}
 		if fw == w {
 			return 0
 		}
@@ -723,6 +742,8 @@ type Face struct {
 	Info        *FaceInfo
 	SynthBold   bool
 	SynthItalic bool
+	// Variations are the axis values of an instance of a variable font.
+	Variations map[string]float64
 
 	// Lazily resolved faces (see ResolveLazy) load Font on demand.
 	lib  *Library
@@ -758,6 +779,9 @@ func (f *Face) Loaded() bool {
 			f.lib.mu.Lock()
 			f.Font = f.lib.Load(f.Info)
 			f.lib.mu.Unlock()
+			if f.Font != nil && f.Variations != nil {
+				f.Font = f.Font.Instance(f.Variations)
+			}
 		}
 	})
 	return f.Font != nil

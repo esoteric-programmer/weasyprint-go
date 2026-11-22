@@ -188,6 +188,14 @@ linear/radial/repeating gradients (with color hints and transparency),
   `font-variant` and `font-feature-settings` descriptors of `@font-face`.
   Code ligatures (Fira Code, JetBrains Mono…) work through `calt`. Small
   caps without `smcp` are emulated like Pango does.
+* Variable TrueType fonts: `font-weight`, `font-stretch`, italic and
+  the optical size (`font-optical-sizing`) set the `wght`, `wdth`,
+  `ital`/`slnt` and `opsz` axes, then `font-variation-settings`; avar,
+  gvar, HVAR, MVAR, feature variations and GDEF/GPOS variation deltas
+  are applied, and a static instance is embedded (identical to
+  fontTools' instancer on the tested fonts). Unlike WeasyPrint, weights
+  between named instances (`font-weight: 650`) are drawn at that weight,
+  and italic uses the `slnt` axis when there is no `ital` axis.
 * Combining marks in decomposed text (accents stored as separate
   characters, as in macOS file names): characters are composed when the
   font has the precomposed glyph and decomposed when it hasn't, marks are
@@ -270,8 +278,8 @@ here:
 * Text: the complex shapers of Indic, Southeast Asian and other scripts
   (their reordering and syllable-based features; the OpenType features
   of their fonts are applied like for simple scripts),
-  `font-variation-settings` (variable fonts use their default instance),
-  nonstandard hyphenation patterns
+  variable CFF2 fonts (drawn with their default instance), nonstandard
+  hyphenation patterns
   that change letters (such as the old German "ck" → "k-k").
 * Images: AVIF, EPS and WMF.
 * PDF: the `debug` variant (link annotations on every id).

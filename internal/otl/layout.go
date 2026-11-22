@@ -398,3 +398,33 @@ func (t *layoutTable) featureVariationConditions() [][][3]float64 {
 	}
 	return out
 }
+
+// matchFeatureVariations returns the first feature variation record whose
+// conditions hold at normalized coordinates (-1 if none).
+func (t *layoutTable) matchFeatureVariations(coords []float64) int {
+	if t == nil || t.featVars == 0 {
+		return -1
+	}
+	for i, conds := range t.featureVariationConditions() {
+		ok := true
+		for _, c := range conds {
+			a := int(c[0])
+			if a < 0 {
+				ok = false
+				break
+			}
+			v := 0.0
+			if a < len(coords) {
+				v = coords[a]
+			}
+			if v < c[1] || v > c[2] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return i
+		}
+	}
+	return -1
+}

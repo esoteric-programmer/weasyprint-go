@@ -219,13 +219,18 @@ func (s *Shaper) shapeRuns(sh *Shaped, runeFace []*fonts.Face, levels []uint8, r
 		return fs
 	}
 	planFor := func(face *fonts.Face, sc int, rtl bool, extra []otl.Feature) *otl.Plan {
-		return otl.NewPlan(face.Font, otl.Options{
+		o := otl.Options{
 			Scripts:  scriptTagsOf(sc),
 			Language: spec.Lang,
 			RTL:      rtl,
 			Arabic:   sc == 1,
 			Features: features(face, sc, rtl, extra),
-		})
+		}
+		if c := face.Font.VarCoords(); c != nil {
+			o.VarCoords = c
+			o.VarDelta = face.Font.VarDelta
+		}
+		return otl.NewPlan(face.Font, o)
 	}
 	// Small caps: the font's features or emulation, per face.
 	type capsInfo struct {

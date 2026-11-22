@@ -41,6 +41,13 @@ func SpecFor(s *css.Style) text.Spec {
 		spec.WordSpacing = l.Resolve(spec.Size)
 	}
 	spec.Caps = s.Kw(css.PFontVariantCaps)
+	if vs, ok := s.Get(css.PFontVariationSettings).([]css.FontVariation); ok {
+		spec.Variations = map[string]float64{}
+		for _, v := range vs {
+			spec.Variations[v.Tag] = v.Value
+		}
+	}
+	spec.NoOpticalSizing = s.Kw(css.PFontOpticalSizing) == "none"
 	alt := s.Get(css.PFontVariantAlternates)
 	for _, f := range css.FontFeatures(s.Kw(css.PFontKerning), s.Get(css.PFontVariantLigatures), s.Get(css.PFontVariantPosition),
 		s.Get(css.PFontVariantCaps), s.Get(css.PFontVariantNumeric), alt, s.Get(css.PFontVariantEastAsian),

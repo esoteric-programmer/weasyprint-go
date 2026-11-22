@@ -66,14 +66,11 @@ type Options struct {
 	RTL      bool
 	Arabic   bool // use the Arabic shaper (joining forms)
 	Features []Feature
-	// VarDelta, if not nil, gives variation store deltas (for GDEF/GPOS
-	// variation device tables) of a variable font instance; VarKey
-	// identifies the instance in the plan cache.
-	VarDelta func(outer, inner int) float64
-	VarKey   string
-	// FeatureVariations is the index of the GSUB/GPOS feature variation
-	// record matching the instance (-1 for none).
-	FeatureVariations [2]int
+	// VarCoords are the normalized coordinates of a variable font
+	// instance (for feature variations), VarDelta gives its variation
+	// store deltas (for GDEF/GPOS variation device tables).
+	VarCoords []float64
+	VarDelta  func(outer, inner int) float64
 }
 
 type planKey struct {
@@ -98,8 +95,10 @@ func NewPlan(f *fonts.Font, o Options) *Plan {
 	for _, ft := range o.Features {
 		kb.WriteString("|" + ft.Tag + "=" + strconv.Itoa(ft.Value))
 	}
-	kb.WriteString("|" + o.VarKey)
-	kb.WriteString("|" + strconv.Itoa(o.FeatureVariations[0]) + "," + strconv.Itoa(o.FeatureVariations[1]))
+	kb.WriteString("|")
+	for _, c := range o.VarCoords {
+		kb.WriteString(strconv.FormatFloat(c, 'g', -1, 64) + ",")
+	}
 	k := planKey{f, kb.String()}
 	if p, ok := plans.Load(k); ok {
 		return p.(*Plan)
@@ -194,7 +193,8 @@ func buildPlan(f *fonts.Font, o Options) (p *Plan) {
 		}
 	}
 
-	build := func(t *layoutTable, fv int) [][]lookupRef {
+	build := func(t *layoutTable) [][]lookupRef {
+		fv := t.matchFeatureVariations(o.VarCoords)
 		if t == nil {
 			return nil
 		}
@@ -227,7 +227,7 @@ func buildPlan(f *fonts.Font, o Options) (p *Plan) {
 		}
 		return stages
 	}
-	p.gsubStages = build(p.gsub, o.FeatureVariations[0])
+	p.gsubStages = build(p.gsub)
 	gposKern := false
 	if p.gpos != nil {
 		if ls := p.gpos.langSys(o.Scripts, langs); ls != 0 {
@@ -235,7 +235,7 @@ func buildPlan(f *fonts.Font, o Options) (p *Plan) {
 			p.hasGPOSMark = p.gpos.hasFeature(ls, "mark")
 		}
 	}
-	p.gposStages = build(p.gpos, o.FeatureVariations[1])
+	p.gposStages = build(p.gpos)
 	p.kernTable = kernOn && !gposKern && len(f.Table("kern")) > 0
 	if o.Arabic {
 		p.ArabicFallback = !p.found["init"] && !p.found["medi"] && !p.found["fina"] && !p.found["isol"]

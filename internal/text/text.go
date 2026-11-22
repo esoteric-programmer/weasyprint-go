@@ -5,6 +5,7 @@ package text
 import (
 	"github.com/esoteric-programmer/weasyprint-go/internal/bidi"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -32,8 +33,12 @@ type Spec struct {
 	// FamilyFeatures are features for faces of some families (lowercase
 	// names), from font-variant-alternates and @font-feature-values.
 	FamilyFeatures map[string][]otl.Feature
-	RTL            bool   // base direction of the text
-	Lang           string // language of the text
+	// Variations are font-variation-settings axis values;
+	// NoOpticalSizing is font-optical-sizing: none.
+	Variations      map[string]float64
+	NoOpticalSizing bool
+	RTL             bool   // base direction of the text
+	Lang            string // language of the text
 }
 
 func (s Spec) key() string {
@@ -49,6 +54,12 @@ func (s Spec) key() string {
 		b.WriteString("i")
 	}
 	b.WriteString(itoa(s.Stretch))
+	// Variable fonts: optical size and variation settings.
+	b.WriteString("|" + strconv.FormatFloat(s.Size, 'g', 6, 64))
+	if s.NoOpticalSizing {
+		b.WriteString("n")
+	}
+	b.WriteString(fonts.VariationKey(s.Variations))
 	return b.String()
 }
 
@@ -137,6 +148,7 @@ func (s *Shaper) fallback(spec Spec, r rune, req fonts.Request) *fonts.Face {
 	if face == nil {
 		face = s.Lib.Fallback(r, req)
 	}
+	face = vary(face, spec)
 	s.mu.Lock()
 	s.fallbacks[key] = face
 	s.mu.Unlock()
@@ -181,7 +193,7 @@ func (s *Shaper) Faces(spec Spec) []*fonts.Face {
 		for _, fam := range ordered {
 			if f := s.Lib.ResolveLazy(fam.Name, req); f != nil && !seen[f.Info] {
 				seen[f.Info] = true
-				out = append(out, f)
+				out = append(out, vary(f, spec))
 				strong = append(strong, fam.Strong)
 				if len(out) >= 12 {
 					break
@@ -192,13 +204,13 @@ func (s *Shaper) Faces(spec Spec) []*fonts.Face {
 		for _, fam := range spec.Families {
 			if f := s.Lib.Resolve(fam, req); f != nil && !seen[f.Info] {
 				seen[f.Info] = true
-				out = append(out, f)
+				out = append(out, vary(f, spec))
 			}
 		}
 	}
 	if len(out) == 0 {
 		if f := s.Lib.Resolve("serif", req); f != nil {
-			out = append(out, f)
+			out = append(out, vary(f, spec))
 		}
 	}
 	for len(strong) < len(out) {
@@ -396,4 +408,39 @@ func isNonGraphic(r rune) bool {
 // positions from HarfBuzz are in Pango.
 func pangoUnits(v float64) float64 {
 	return math.Round(v*1024) / 1024
+}
+
+// vary returns the instance of a variable face for a spec: the weight,
+// width, italic and optical size axes follow the font properties (as
+// CSS Fonts 4 and fontconfig set them), then font-variation-settings.
+func vary(f *fonts.Face, spec Spec) *fonts.Face {
+	if f == nil || f.Info == nil || len(f.Info.Axes) == 0 {
+		return f
+	}
+	fi := f.Info
+	v := map[string]float64{}
+	if _, _, ok := fi.AxisRange("wght"); ok {
+		w := spec.Weight
+		if w == 0 {
+			w = 400
+		}
+		v["wght"] = float64(w)
+	}
+	if _, _, ok := fi.AxisRange("wdth"); ok {
+		v["wdth"] = fonts.StretchPercent(spec.Stretch)
+	}
+	if _, _, ok := fi.AxisRange("opsz"); ok && !spec.NoOpticalSizing && spec.Size > 0 {
+		v["opsz"] = spec.Size
+	}
+	if spec.Italic {
+		if _, hi, ok := fi.AxisRange("ital"); ok && hi >= 1 {
+			v["ital"] = 1
+		} else if lo, _, ok := fi.AxisRange("slnt"); ok && !fi.Italic {
+			v["slnt"] = math.Max(lo, -14)
+		}
+	}
+	for k, val := range spec.Variations {
+		v[k] = val
+	}
+	return f.WithVariations(v)
 }
