@@ -852,8 +852,10 @@ func decodeBLP(d []byte) (image.Image, error) {
 			}
 			return img, nil
 		case compression == 1 && (encoding == 4 || encoding == 5):
+			// Like Pillow, the indices follow the palette (Pillow writes
+			// a wrong offset).
 			pal := readPalette()
-			return bgra(pal, off0)
+			return bgra(pal, p)
 		}
 		return nil, errors.New("unsupported BLP1 encoding")
 	}
@@ -1347,7 +1349,7 @@ func decodeFLI(d []byte) (image.Image, error) {
 // ---------------------------------------------------------------- PhotoCD
 
 // decodePCD decodes the base (768×512) image of a Kodak PhotoCD file,
-// converting its PhotoYCC colors to RGB (Pillow keeps the YCC values).
+// converting its PhotoYCC colors to RGB.
 func decodePCD(d []byte) (image.Image, error) {
 	const w, h = 768, 512
 	off := 96 * 2048

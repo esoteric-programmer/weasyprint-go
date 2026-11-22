@@ -1,0 +1,9 @@
+Comparison of the image decoders with Pillow:
+
+  python3 imgt_gen.py            # writes samples and Pillow digests to /tmp/imgt
+  IMGT_DIR=/tmp/imgt go test ./internal/images -run PillowCompare
+  python3 imgt_cmp.py            # lists the files decoded differently
+
+Expected differences (Pillow bugs): a.cur (mask ignored), a.xbm (inverted),
+a.xpm (Pillow fails), bc6hs.dds (negative values), lab.psd (no Lab
+conversion), rgb16.tga (5-bit expansion, alpha bit), a.pcd (rounding).

@@ -27,7 +27,7 @@ def raw(name, data, adjust=None):
     p=os.path.join(D,name); open(p,'wb').write(data)
     try: refs[name]=ref_of(p, adjust)
     except Exception as e: refs[name]='PILLOW-ERROR '+type(e).__name__+' '+str(e)[:60]
-exec(open('/tmp/imgt_cases.py').read())
+exec(open(os.path.join(os.path.dirname(__file__),"imgt_cases.py")).read()); exec(open(os.path.join(os.path.dirname(__file__),"imgt_cases2.py")).read())
 with open(os.path.join(D,'ref.txt'),'w') as f:
     for k in sorted(refs): f.write(f'{k} {refs[k]}\n')
 print(len(refs),'files')

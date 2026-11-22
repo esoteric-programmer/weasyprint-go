@@ -50,13 +50,15 @@ func bc3Alpha(out *[16]bcPixel, s []byte, ch int, signed bool) {
 	if signed {
 		a0, a1 := int(int8(s[0])), int(int8(s[1]))
 		a[0], a[1] = a0, a1
+		// Divisions round down, like Pillow.
+		fdiv := func(a, b int) int { return int(math.Floor(float64(a) / float64(b))) }
 		if a0 > a1 {
 			for i := 2; i < 8; i++ {
-				a[i] = ((8-i)*a0 + (i-1)*a1) / 7
+				a[i] = fdiv((8-i)*a0+(i-1)*a1, 7)
 			}
 		} else {
 			for i := 2; i < 6; i++ {
-				a[i] = ((6-i)*a0 + (i-1)*a1) / 5
+				a[i] = fdiv((6-i)*a0+(i-1)*a1, 5)
 			}
 			a[6], a[7] = -128, 127
 		}
@@ -126,6 +128,9 @@ func decodeBCn(data []byte, w, h, n int, noAlpha bool) (image.Image, error) {
 				bc3Alpha(&px, s[8:], 1, n < 0)
 				for i := range px {
 					px[i][3] = 255
+					if n < 0 {
+						px[i][2] = 128 // zero in signed data
+					}
 				}
 			}
 			for i := 0; i < 16; i++ {
