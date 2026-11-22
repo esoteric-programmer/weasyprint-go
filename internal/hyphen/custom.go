@@ -14,16 +14,21 @@ type Rules struct {
 	// Lang is the BCP 47 language tag the rules apply to ("de",
 	// "de-CH-1901", "en-GB"…); more specific tags win.
 	Lang string
-	// Patterns, if not empty, replace the built-in patterns (and their
-	// exceptions). Accepted formats: TeX files with \patterns{…} (and
-	// \hyphenation{…}), Hunspell/LibreOffice .dic files (first line is the
-	// encoding), and plain pattern lists (hyph-utf8 .pat.txt).
+	// Patterns are added to the built-in patterns of the language; a
+	// pattern for the same letters as a built-in one replaces it.
+	// Accepted formats: TeX files with \patterns{…} (and
+	// \hyphenation{…}, added to the exceptions), Hunspell/LibreOffice .dic
+	// files (first line is the encoding), and plain pattern lists
+	// (hyph-utf8 .pat.txt).
 	Patterns []byte
 	// Exceptions are words with their hyphenation points ("as-so-ciate";
 	// a word without hyphens is never hyphenated), one per line or
 	// separated by spaces, or a TeX \hyphenation{…} list. They are added
-	// to the exceptions of the patterns (and win over them).
+	// to the built-in exceptions; a word in both uses the user's points.
 	Exceptions []byte
+	// Replace makes Patterns replace the built-in patterns and
+	// exceptions instead of extending them.
+	Replace bool
 	// Left and Right, if positive, are the minimum numbers of characters
 	// before and after a hyphen for hyphenate-limit-chars: auto
 	// (\lefthyphenmin and \righthyphenmin).
@@ -44,23 +49,25 @@ func NewSet(rules []Rules, src Source, warn func(string)) (*Set, error) {
 		if tag == "" {
 			return nil, errors.New("hyphenation rules without language")
 		}
-		var d *Dict
+		// The dictionary to extend: earlier rules for the tag, else the
+		// built-in one (copied: the built-in dictionaries are shared).
+		d := s.dicts[tag]
+		if d == nil || r.Replace {
+			if base := Lookup(r.Lang, src); base != nil && !r.Replace {
+				d = base.clone()
+			} else {
+				d = newDict()
+				d.Left, d.Right, d.MinWord = 2, 2, 4
+			}
+		}
 		if len(r.Patterns) > 0 {
-			nd, err := ParsePatterns(r.Patterns, warn)
+			ud, err := ParsePatterns(r.Patterns, warn)
 			if err != nil {
 				return nil, fmt.Errorf("hyphenation patterns for %s: %w", r.Lang, err)
 			}
-			d = nd
-		} else if prev := s.dicts[tag]; prev != nil {
-			d = prev
-		} else if base := Lookup(r.Lang, src); base != nil {
-			d = base.clone()
-		} else {
-			d = newDict()
-			d.Left, d.Right, d.MinWord = 2, 2, 5
+			d.merge(ud)
 		}
 		if len(r.Exceptions) > 0 {
-			d.exceptions = copyExceptions(d.exceptions)
 			if err := d.AddExceptions(r.Exceptions); err != nil {
 				return nil, fmt.Errorf("hyphenation exceptions for %s: %w", r.Lang, err)
 			}
@@ -101,10 +108,50 @@ func newDict() *Dict {
 	return &Dict{patterns: map[string]pattern{}, cache: map[string][]int{}}
 }
 
-// clone returns a dictionary sharing the patterns of d.
+// clone returns a copy of d (patterns and exceptions copied on write).
 func (d *Dict) clone() *Dict {
 	return &Dict{Left: d.Left, Right: d.Right, MinWord: d.MinWord, patterns: d.patterns,
-		exceptions: d.exceptions, maxLen: d.maxLen, cache: map[string][]int{}}
+		exceptions: d.exceptions, maxLen: d.maxLen, cache: map[string][]int{}, shared: true}
+}
+
+// own copies the shared maps of a clone before it is modified.
+func (d *Dict) own() {
+	if !d.shared {
+		return
+	}
+	p := make(map[string]pattern, len(d.patterns))
+	for k, v := range d.patterns {
+		p[k] = v
+	}
+	d.patterns = p
+	d.exceptions = copyExceptions(d.exceptions)
+	d.shared = false
+}
+
+// merge adds the patterns, exceptions and minimums of u to d; u's entries
+// win.
+func (d *Dict) merge(u *Dict) {
+	d.own()
+	for k, v := range u.patterns {
+		d.patterns[k] = v
+	}
+	if u.maxLen > d.maxLen {
+		d.maxLen = u.maxLen
+	}
+	if d.exceptions == nil {
+		d.exceptions = map[string][]int{}
+	}
+	for k, v := range u.exceptions {
+		d.exceptions[k] = v
+	}
+	if u.Left > 0 {
+		d.Left = u.Left
+	}
+	if u.Right > 0 {
+		d.Right = u.Right
+	}
+	d.MinWord = d.Left + d.Right
+	d.cache = map[string][]int{}
 }
 
 func copyExceptions(m map[string][]int) map[string][]int {
@@ -116,9 +163,9 @@ func copyExceptions(m map[string][]int) map[string][]int {
 }
 
 // ParsePatterns parses hyphenation patterns (TeX, Hunspell or plain).
+// Left and Right are only set by Hunspell LEFTHYPHENMIN/RIGHTHYPHENMIN.
 func ParsePatterns(data []byte, warn func(string)) (*Dict, error) {
 	d := newDict()
-	d.Left, d.Right = 2, 2
 	text, hunspell, err := decodeRules(data)
 	if err != nil {
 		return nil, err
@@ -173,7 +220,6 @@ func ParsePatterns(data []byte, warn func(string)) (*Dict, error) {
 	if len(d.patterns) == 0 && len(d.exceptions) == 0 {
 		return nil, errors.New("no patterns found")
 	}
-	d.MinWord = d.Left + d.Right
 	return d, nil
 }
 
@@ -185,6 +231,10 @@ func (d *Dict) AddExceptions(data []byte) error {
 	}
 	if g, ok := texGroup(text, `\hyphenation`); ok {
 		text = g
+	}
+	d.own()
+	if d.exceptions == nil {
+		d.exceptions = map[string][]int{}
 	}
 	for _, line := range strings.Split(text, "\n") {
 		for _, w := range strings.Fields(stripComment(line)) {

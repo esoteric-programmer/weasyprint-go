@@ -1,6 +1,9 @@
 package hyphen
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCustomRules(t *testing.T) {
 	tex := []byte(`% test patterns
@@ -37,6 +40,42 @@ func TestCustomRules(t *testing.T) {
 	// The built-in dictionary is not modified.
 	if got := ForLang("de").Hyphenate("Silbentrennung"); got != "Sil-ben-tren-nung" {
 		t.Errorf("built-in changed: %s", got)
+	}
+	// Patterns extend the built-in ones: "Urinstinkt" gets an extra point
+	// from a user pattern, other words keep the built-in points, and the
+	// built-in exceptions stay.
+	add, err := NewSet([]Rules{{Lang: "en", Patterns: []byte("ur1in")}, {Lang: "de", Patterns: []byte("4n1st"), Exceptions: []byte("Ur-ins-tinkt")}}, TeX, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ lang, word, want string }{
+		{"de", "Urinstinkt", "Ur-ins-tinkt"}, // user exception wins
+		{"de", "Silbentrennung", "Sil-ben-tren-nung"},
+		{"en", "present", "present"}, // built-in exception kept
+		{"en", "hyphenation", "hy-phen-ation"},
+	} {
+		if got := add.Lookup(c.lang, TeX).Hyphenate(c.word); got != c.want {
+			t.Errorf("extended %s %s: got %s, want %s", c.lang, c.word, got, c.want)
+		}
+	}
+	// A user pattern adds points (odd 9 wins over all built-in values).
+	plus, err := NewSet([]Rules{{Lang: "en", Patterns: []byte("e9x")}}, TeX, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plus.Lookup("en", TeX).Hyphenate("hexagonal"); !strings.HasPrefix(got, "he-x") {
+		t.Errorf("added pattern: got %s", got)
+	}
+	if got := plus.Lookup("en", TeX).Hyphenate("hyphenation"); got != "hy-phen-ation" {
+		t.Errorf("built-in patterns lost: got %s", got)
+	}
+	// Replace drops the built-in patterns.
+	rep, err := NewSet([]Rules{{Lang: "de", Patterns: []byte("1ba"), Replace: true}}, TeX, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rep.Lookup("de", TeX).Hyphenate("Silbentrennung"); got != "Silbentrennung" {
+		t.Errorf("replaced: got %s", got)
 	}
 	if _, err := NewSet([]Rules{{Lang: "xx", Patterns: []byte(`\patterns{1ba`)}}, TeX, nil); err == nil {
 		t.Error("unterminated \\patterns accepted")

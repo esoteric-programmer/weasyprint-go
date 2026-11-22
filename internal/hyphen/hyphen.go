@@ -225,6 +225,7 @@ type Dict struct {
 
 	patterns   map[string]pattern
 	exceptions map[string][]int
+	shared     bool // patterns and exceptions belong to another Dict
 	maxLen     int
 	mu         sync.Mutex
 	cache      map[string][]int

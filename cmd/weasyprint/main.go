@@ -89,7 +89,8 @@ func main() {
 	hinting := c.boolean("", "hinting", "keep hinting information in embedded fonts")
 	cache := c.str("c", "cache-folder", "", "store remote resources in a folder to reuse them in later renderings")
 	hyphenation := c.str("", "hyphenation", "tex", "built-in hyphenation patterns: tex (LaTeX's, the default)\nor pyphen (the Hunspell patterns used by WeasyPrint)")
-	hyphPatterns := c.multi("", "hyphenation-patterns", "LANG=FILE: hyphenation patterns replacing the built-in ones of a language\n(TeX \\patterns file, Hunspell .dic or pattern list; may be repeated)")
+	hyphPatterns := c.multi("", "hyphenation-patterns", "LANG=FILE: hyphenation patterns added to the built-in ones of a language\n(TeX \\patterns file, Hunspell .dic or pattern list; may be repeated)")
+	hyphReplace := c.multi("", "hyphenation-replace", "LANG: user patterns replace the built-in patterns and exceptions\nof a language instead of extending them (may be repeated)")
 	hyphExceptions := c.multi("", "hyphenation-exceptions", "LANG=FILE: hyphenation exceptions (\"as-so-ciate\") added for a language\n(may be repeated)")
 	hyphMins := c.multi("", "hyphenation-min", "LANG=LEFT,RIGHT: minimum characters before and after a hyphen\nfor a language (may be repeated)")
 	pageSize := c.str("", "page-size", "", "page size of all pages, overriding the document's CSS\n(\"A4\", \"A5 landscape\", \"letter\", \"210mm 297mm\"...)")
@@ -247,6 +248,9 @@ func main() {
 	for _, v := range *hyphPatterns {
 		lang, file := langValue("hyphenation-patterns", v)
 		rule(lang).PatternsFile = file
+	}
+	for _, lang := range *hyphReplace {
+		rule(lang).Replace = true
 	}
 	for _, v := range *hyphExceptions {
 		lang, file := langValue("hyphenation-exceptions", v)

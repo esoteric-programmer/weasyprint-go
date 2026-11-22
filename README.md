@@ -42,8 +42,9 @@ Options (the same as WeasyPrint's CLI, plus `--page-size` and
 | `-e`, `--encoding ENC` | Input character encoding |
 | `-p`, `--presentational-hints` | Follow HTML presentational hints (`align`, `bgcolor`, `width`…) |
 | `--page-size SIZE` | Page size of all pages, overriding the document's CSS: a CSS `size` value such as `A4`, `A5 landscape`, `letter`, `210mm 297mm` (not in WeasyPrint, where `-s` with `@page { size: … }` does the same) |
-| `--hyphenation-patterns LANG=FILE` | Hyphenation patterns replacing the built-in ones of a language: a TeX file with `\patterns{…}` (and `\hyphenation{…}`), a Hunspell `.dic` file or a pattern list (may be repeated) |
-| `--hyphenation-exceptions LANG=FILE` | Hyphenation exceptions (`as-so-ciate`; a word without hyphens is never hyphenated) added for a language (may be repeated) |
+| `--hyphenation-patterns LANG=FILE` | Hyphenation patterns added to the built-in ones of a language (user patterns win for the same letters): a TeX file with `\patterns{…}` (and `\hyphenation{…}`), a Hunspell `.dic` file or a pattern list (may be repeated) |
+| `--hyphenation-exceptions LANG=FILE` | Hyphenation exceptions (`as-so-ciate`; a word without hyphens is never hyphenated) added to the built-in ones of a language; for words in both, the user's points are used (may be repeated) |
+| `--hyphenation-replace LANG` | User patterns replace the built-in patterns and exceptions of the language instead of extending them (may be repeated) |
 | `--hyphenation-min LANG=LEFT,RIGHT` | Minimum characters before and after a hyphen for a language (`\lefthyphenmin`, `\righthyphenmin`; may be repeated) |
 | `--hyphenation PATTERNS` | Built-in hyphenation patterns: `tex` (default, LaTeX's patterns, see below) or `pyphen` (the Hunspell patterns WeasyPrint uses) |
 | `-a`, `--attachment FILE` | Attach a file to the PDF (repeatable) |
@@ -93,7 +94,8 @@ doesn't set (A4 otherwise); `weasyprint.PageSize("A5 landscape")` converts
 a CSS page size for it. `Options.Hyphenation` selects the hyphenation
 built-in hyphenation patterns (`HyphenationTeX`, the default, or
 `HyphenationPyphen`); `Options.HyphenationRules` adds user-defined
-patterns and exceptions per language, from files or from memory.
+patterns and exceptions per language, from files or from memory, to the
+built-in ones (the user's entries win; `Replace` drops the built-in ones).
 `HTML.Render(opts)` returns a `*Document` with page sizes and metadata,
 which can then be written with `Document.WritePDF(w)` (or
 `WritePDFWithOptions` with other PDF options).

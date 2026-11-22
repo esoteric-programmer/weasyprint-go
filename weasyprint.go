@@ -204,17 +204,22 @@ type HyphenationRules struct {
 	// Lang is the BCP 47 language tag the rules apply to ("de",
 	// "de-CH-1901", "en-GB"…); they also apply to more specific tags.
 	Lang string
-	// Patterns (or the file PatternsFile) replace the built-in patterns
-	// of the language: a TeX file with \patterns{…} (and optionally
+	// Patterns (or the file PatternsFile) are added to the built-in
+	// patterns of the language, a pattern for the same letters replacing
+	// the built-in one: a TeX file with \patterns{…} (and optionally
 	// \hyphenation{…}), a Hunspell/LibreOffice .dic file, or a plain list
 	// of patterns such as hyph-utf8's .pat.txt files.
 	Patterns     []byte
 	PatternsFile string
 	// Exceptions (or the file ExceptionsFile) are words with their
 	// hyphenation points ("as-so-ciate"; a word without hyphens is never
-	// hyphenated), added to the patterns' exceptions.
+	// hyphenated), added to the built-in exceptions; for a word in both,
+	// the user's points are used.
 	Exceptions     []byte
 	ExceptionsFile string
+	// Replace drops the built-in patterns and exceptions of the language
+	// instead of extending them.
+	Replace bool
 	// Left and Right, if positive, set the minimum numbers of characters
 	// before and after a hyphen used for hyphenate-limit-chars: auto.
 	Left, Right int
@@ -227,7 +232,7 @@ func hyphenationRules(hrs []HyphenationRules, src Hyphenation, warn func(string)
 	}
 	var rules []hyphen.Rules
 	for _, hr := range hrs {
-		r := hyphen.Rules{Lang: hr.Lang, Patterns: hr.Patterns, Exceptions: hr.Exceptions, Left: hr.Left, Right: hr.Right}
+		r := hyphen.Rules{Lang: hr.Lang, Patterns: hr.Patterns, Exceptions: hr.Exceptions, Left: hr.Left, Right: hr.Right, Replace: hr.Replace}
 		if hr.PatternsFile != "" {
 			data, err := os.ReadFile(hr.PatternsFile)
 			if err != nil {
