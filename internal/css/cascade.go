@@ -26,6 +26,7 @@ type Resolver struct {
 	Sheets        []*Stylesheet
 	CounterStyles CounterStyles
 	FontFaces     []*FontFaceRule
+	FeatureValues map[string]FeatureValues
 	ColorProfiles []*ColorProfileRule
 	PageRules     []*PageRule
 	BaseURL       string
@@ -66,6 +67,24 @@ func NewResolver(doc *html.Node, sheets []*Stylesheet, baseURL string) *Resolver
 			r.CounterStyles[name] = cs
 		}
 		r.FontFaces = append(r.FontFaces, sh.FontFaces...)
+		for fam, fv := range sh.FeatureValues {
+			if r.FeatureValues == nil {
+				r.FeatureValues = map[string]FeatureValues{}
+			}
+			cur := r.FeatureValues[fam]
+			if cur == nil {
+				cur = FeatureValues{}
+				r.FeatureValues[fam] = cur
+			}
+			for typ, vals := range fv {
+				if cur[typ] == nil {
+					cur[typ] = map[string][]int{}
+				}
+				for name, v := range vals {
+					cur[typ][name] = v
+				}
+			}
+		}
 		r.ColorProfiles = append(r.ColorProfiles, sh.ColorProfiles...)
 		r.PageRules = append(r.PageRules, sh.PageRules...)
 		for _, rule := range sh.Rules {
@@ -840,6 +859,20 @@ var borderWidthKeywords = map[string]float64{"thin": 1, "medium": 3, "thick": 5}
 
 func (ctx *computeCtx) computeValue(id PropID, v Value, c *cascaded) Value {
 	switch id {
+	case PFontVariantAlternates:
+		// Feature values of the functions, for each family.
+		if fa, ok := v.(FontAlternates); ok && len(fa.Functions) > 0 {
+			fa.ByFamily = map[string][]FontFeature{}
+			fams, _ := ctx.style.vals[PFontFamily].([]string)
+			for _, fam := range fams {
+				fam = strings.ToLower(fam)
+				if fv, ok := ctx.r.FeatureValues[fam]; ok {
+					fa.ByFamily[fam] = AlternateFeatures(fa, fv)
+				}
+			}
+			return fa
+		}
+		return v
 	case PFontWeight:
 		if k, ok := v.(Keyword); ok {
 			pw := 400.0

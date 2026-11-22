@@ -357,27 +357,7 @@ func init() {
 	shorthand("page-break-before", []PropID{PBreakBefore}, legacyBreak(PBreakBefore, false))
 	shorthand("page-break-after", []PropID{PBreakAfter}, legacyBreak(PBreakAfter, false))
 	shorthand("page-break-inside", []PropID{PBreakInside}, legacyBreak(PBreakInside, true))
-	shorthand("font-variant", []PropID{PFontVariantCaps, PFontVariantNumeric}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
-		var caps Value = Keyword("normal")
-		var num []string
-		for _, t := range ts {
-			if t.Type != TIdent {
-				return nil, false
-			}
-			switch t.Value {
-			case "normal", "none":
-			case "small-caps", "all-small-caps", "petite-caps", "all-petite-caps", "unicase", "titling-caps":
-				caps = Keyword(t.Value)
-			case "lining-nums", "oldstyle-nums", "proportional-nums", "tabular-nums", "diagonal-fractions", "stacked-fractions", "ordinal", "slashed-zero":
-				num = append(num, t.Value)
-			}
-		}
-		var nv Value = Keyword("normal")
-		if num != nil {
-			nv = num
-		}
-		return []PropValue{{PFontVariantCaps, caps}, {PFontVariantNumeric, nv}}, true
-	})
+	shorthand("font-variant", []PropID{PFontVariantLigatures, PFontVariantCaps, PFontVariantAlternates, PFontVariantNumeric, PFontVariantEastAsian, PFontVariantPosition}, expandFontVariant)
 	shorthand("font", []PropID{PFontStyle, PFontVariantCaps, PFontWeight, PFontStretch, PFontSize, PLineHeight, PFontFamily}, expandFont)
 	shorthand("flex", []PropID{PFlexGrow, PFlexShrink, PFlexBasis}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
 		if t, ok := single(ts); ok && t.Type == TIdent {

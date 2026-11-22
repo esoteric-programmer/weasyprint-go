@@ -34,6 +34,14 @@ type FaceInfo struct {
 	font         *Font
 	unicodeRange [][2]rune
 	userDefined  bool
+	// Features are the OpenType features of the @font-face rule.
+	Features []FeatureSetting
+}
+
+// FeatureSetting is an OpenType feature setting.
+type FeatureSetting struct {
+	Tag   string
+	Value int
 }
 
 // Covers reports whether a user-defined face's unicode-range covers r.
@@ -336,12 +344,12 @@ func (l *Library) covers(fi *FaceInfo, r rune) bool {
 }
 
 // AddFontFace registers an @font-face font.
-func (l *Library) AddFontFace(family string, font *Font, weight [2]float64, style, stretch string, unicodeRange [][2]rune) {
+func (l *Library) AddFontFace(family string, font *Font, weight [2]float64, style, stretch string, unicodeRange [][2]rune, features []FeatureSetting) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	w := int(weight[0])
 	fi := &FaceInfo{Families: []string{strings.ToLower(family)}, Weight: w, Italic: style == "italic" || style == "oblique",
-		Stretch: stretchValue(stretch), font: font, unicodeRange: unicodeRange, userDefined: true}
+		Stretch: stretchValue(stretch), font: font, unicodeRange: unicodeRange, userDefined: true, Features: features}
 	fam := strings.ToLower(family)
 	l.user[fam] = append(l.user[fam], fi)
 }

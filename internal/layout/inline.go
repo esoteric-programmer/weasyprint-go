@@ -7,6 +7,7 @@ import (
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/hyphen"
+	"github.com/esoteric-programmer/weasyprint-go/internal/otl"
 	"github.com/esoteric-programmer/weasyprint-go/internal/text"
 )
 
@@ -39,19 +40,18 @@ func SpecFor(s *css.Style) text.Spec {
 	if l, ok := s.Get(css.PWordSpacing).(css.Length); ok {
 		spec.WordSpacing = l.Resolve(spec.Size)
 	}
-	caps := s.Kw(css.PFontVariantCaps)
-	spec.SmallCaps = caps == "small-caps" || caps == "all-small-caps"
-	spec.AllSmallCaps = caps == "all-small-caps"
-	spec.NoKerning = s.Kw(css.PFontKerning) == "none"
-	if feats, ok := s.Get(css.PFontFeatureSettings).([]css.FontFeature); ok {
-		for _, f := range feats {
-			switch f.Tag {
-			case "liga":
-				spec.NoLigatures = f.Value == 0
-			case "kern":
-				spec.NoKerning = f.Value == 0
-			case "smcp":
-				spec.SmallCaps = f.Value != 0
+	spec.Caps = s.Kw(css.PFontVariantCaps)
+	alt := s.Get(css.PFontVariantAlternates)
+	for _, f := range css.FontFeatures(s.Kw(css.PFontKerning), s.Get(css.PFontVariantLigatures), s.Get(css.PFontVariantPosition),
+		s.Get(css.PFontVariantCaps), s.Get(css.PFontVariantNumeric), alt, s.Get(css.PFontVariantEastAsian),
+		s.Get(css.PFontFeatureSettings)) {
+		spec.Features = append(spec.Features, otl.Feature{Tag: f.Tag, Value: f.Value})
+	}
+	if fa, ok := alt.(css.FontAlternates); ok && len(fa.ByFamily) > 0 {
+		spec.FamilyFeatures = map[string][]otl.Feature{}
+		for fam, fs := range fa.ByFamily {
+			for _, f := range fs {
+				spec.FamilyFeatures[fam] = append(spec.FamilyFeatures[fam], otl.Feature{Tag: f.Tag, Value: f.Value})
 			}
 		}
 	}

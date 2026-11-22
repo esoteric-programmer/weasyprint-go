@@ -542,7 +542,11 @@ func loadFontFaces(lib *fonts.Library, faces []*css.FontFaceRule, f fetch.Fetche
 			warn(fmt.Sprintf("Font-face %q cannot be loaded", ff.Family))
 			continue
 		}
-		lib.AddFontFace(ff.Family, font, ff.Weight, ff.Style, ff.Stretch, ff.UnicodeRange)
+		var feats []fonts.FeatureSetting
+		for _, f := range ff.Features {
+			feats = append(feats, fonts.FeatureSetting{Tag: f.Tag, Value: f.Value})
+		}
+		lib.AddFontFace(ff.Family, font, ff.Weight, ff.Style, ff.Stretch, ff.UnicodeRange, feats)
 	}
 }
 

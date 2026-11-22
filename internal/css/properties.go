@@ -1048,21 +1048,6 @@ func parseFontFeatures(ts []Token, _ *ParseCtx) Value {
 	return out
 }
 
-func parseFontVariant(ts []Token, _ *ParseCtx) Value {
-	// Store as a list of keywords; only small-caps has an effect.
-	var out []string
-	for _, t := range ts {
-		if t.Type != TIdent {
-			return nil
-		}
-		out = append(out, t.Value)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 func parseTabSize(ts []Token, _ *ParseCtx) Value {
 	if t, ok := single(ts); ok {
 		if t.Type == TNumber && t.Num >= 0 {
@@ -1190,16 +1175,22 @@ var (
 	PBackgroundOrigin     = def("background-origin", false, []string{"padding-box"}, parseKwList("border-box", "padding-box", "content-box"))
 	PBoxShadow            = def("box-shadow", false, Keyword("none"), parseShadows)
 
-	PFontFamily          = def("font-family", true, []string{"serif"}, parseFontFamily)
-	PFontSize            = def("font-size", true, Px(16), parseFontSize)
-	PFontStyle           = def("font-style", true, Keyword("normal"), kw("normal", "italic", "oblique"))
-	PFontWeight          = def("font-weight", true, Number(400), parseFontWeight)
-	PFontStretch         = def("font-stretch", true, Keyword("normal"), kw("normal", "ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "semi-expanded", "expanded", "extra-expanded", "ultra-expanded"))
-	PFontVariantCaps     = def("font-variant-caps", true, Keyword("normal"), kw("normal", "small-caps", "all-small-caps", "petite-caps", "all-petite-caps", "unicase", "titling-caps"))
-	PFontVariantNumeric  = def("font-variant-numeric", true, Keyword("normal"), parseFontVariant)
-	PFontFeatureSettings = def("font-feature-settings", true, Keyword("normal"), parseFontFeatures)
-	PFontKerning         = def("font-kerning", true, Keyword("auto"), kw("auto", "normal", "none"))
-	PLineHeight          = def("line-height", true, Keyword("normal"), parseLineHeight)
+	PFontFamily            = def("font-family", true, []string{"serif"}, parseFontFamily)
+	PFontSize              = def("font-size", true, Px(16), parseFontSize)
+	PFontStyle             = def("font-style", true, Keyword("normal"), kw("normal", "italic", "oblique"))
+	PFontWeight            = def("font-weight", true, Number(400), parseFontWeight)
+	PFontStretch           = def("font-stretch", true, Keyword("normal"), kw("normal", "ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "semi-expanded", "expanded", "extra-expanded", "ultra-expanded"))
+	PFontVariantCaps       = def("font-variant-caps", true, Keyword("normal"), kw("normal", "small-caps", "all-small-caps", "petite-caps", "all-petite-caps", "unicase", "titling-caps"))
+	PFontVariantNumeric    = def("font-variant-numeric", true, Keyword("normal"), parseFontVariantNumeric)
+	PFontVariantLigatures  = def("font-variant-ligatures", true, Keyword("normal"), parseFontVariantLigatures)
+	PFontVariantPosition   = def("font-variant-position", true, Keyword("normal"), kw("normal", "sub", "super"))
+	PFontVariantAlternates = def("font-variant-alternates", true, Keyword("normal"), parseFontVariantAlternates)
+	PFontVariantEastAsian  = def("font-variant-east-asian", true, Keyword("normal"), parseFontVariantEastAsian)
+	PFontVariationSettings = def("font-variation-settings", true, Keyword("normal"), parseFontVariationSettings)
+	PFontOpticalSizing     = def("font-optical-sizing", true, Keyword("auto"), parseFontOpticalSizing)
+	PFontFeatureSettings   = def("font-feature-settings", true, Keyword("normal"), parseFontFeatures)
+	PFontKerning           = def("font-kerning", true, Keyword("auto"), kw("auto", "normal", "none"))
+	PLineHeight            = def("line-height", true, Keyword("normal"), parseLineHeight)
 
 	PTextAlignAll            = def("text-align-all", true, Keyword("start"), parseTextAlign)
 	PTextAlignLast           = def("text-align-last", true, Keyword("auto"), kw("auto", "left", "right", "center", "justify", "start", "end", "match-parent"))

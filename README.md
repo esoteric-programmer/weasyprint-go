@@ -177,9 +177,24 @@ linear/radial/repeating gradients (with color hints and transparency),
   `hyphenate-limit-chars`, `hyphenate-limit-zone`; dictionaries for about
   50 languages are built in, and German and English hyphenate like LaTeX,
   see below), `overflow-wrap`,
-  `word-break`, `tab-size`, all `vertical-align` values, inline blocks,
-  kerning, standard ligatures, small caps (`smcp`/`c2sc` or emulated),
-  `font-language-override`.
+  `word-break`, `tab-size`, all `vertical-align` values, inline blocks.
+* OpenType shaping with GSUB, GPOS and GDEF, following HarfBuzz's model
+  for Latin, Greek, Cyrillic and other simple scripts and for Arabic:
+  the default features (`ccmp`, `locl`, `rlig`, `liga`, `clig`, `calt`,
+  `rclt`, `kern`, `mark`, `mkmk`, `curs`, `dist`, automatic fractions…)
+  for the script and language, `font-feature-settings`,
+  `font-variant-ligatures`/`-position`/`-caps`/`-numeric`/`-alternates`/
+  `-east-asian`, `font-kerning`, `font-language-override`, and the
+  `font-variant` and `font-feature-settings` descriptors of `@font-face`.
+  Code ligatures (Fira Code, JetBrains Mono…) work through `calt`. Small
+  caps without `smcp` are emulated like Pango does.
+* Combining marks in decomposed text (accents stored as separate
+  characters, as in macOS file names): characters are composed when the
+  font has the precomposed glyph and decomposed when it hasn't, marks are
+  attached with GPOS mark-to-base/mark-to-mark positioning or, for fonts
+  without GPOS, placed around the base with its glyph extents. A base and
+  its marks form one cluster for line breaking, hyphenation, spacing and
+  text extraction.
 * Floats and `clear`; relative, absolute and fixed positioning
   (fixed boxes repeat on every page); `z-index` stacking.
 * Lists with inside and outside markers.
@@ -252,11 +267,9 @@ collections) sources and `local()`.
 Supported by WeasyPrint (through Pango, HarfBuzz and Pillow) but not
 here:
 
-* Text: complex shaping of Indic and other scripts (only Arabic gets
-  joining forms), OpenType features beyond kerning, standard and
-  required ligatures, Arabic forms and small caps (`font-feature-settings`,
-  `font-variant-numeric`/`-position`/`-ligatures`/`-east-asian`/
-  `-alternates`, contextual alternates, mark positioning),
+* Text: the complex shapers of Indic, Southeast Asian and other scripts
+  (their reordering and syllable-based features; the OpenType features
+  of their fonts are applied like for simple scripts),
   `font-variation-settings` (variable fonts use their default instance),
   nonstandard hyphenation patterns
   that change letters (such as the old German "ck" → "k-k").
@@ -278,7 +291,17 @@ widths, `overflow: clip`, `word-break: keep-all`,
 `place-content`, grid templates with named areas, the `:required`,
 `:optional`, `:read-only`, `:read-write`, `:placeholder-shown`,
 `:default` and `:indeterminate` selectors, the `--page-size`
-option, gzip-compressed (SVGZ) images, and WOFF2 font collections.
+option, gzip-compressed (SVGZ) images, WOFF2 font collections, the
+functions of `font-variant-alternates` (`stylistic()`, `styleset()`,
+`character-variant()`, `swash()`, `ornaments()`, `annotation()`) with
+`@font-feature-values`.
+
+A combining mark drawn with another font than its base is placed on the
+base here, and a grapheme cluster (a letter and its marks, or a
+precomposed letter the preferred font can draw decomposed) is drawn with
+a single font when one can draw it whole: Pango chooses a font for each
+character, so that WeasyPrint draws marks missing from the base's font
+as spacing characters next to it.
 
 Hyphenation of German and English differs on purpose. WeasyPrint uses the
 Hunspell patterns of Pyphen for every language; here German and English
@@ -382,7 +405,9 @@ reproduced:
 | `internal/html` | HTML tokenizer and tree builder | html5lib |
 | `internal/css` | Tokenizer, parser, selectors, cascade, computed values, counter styles, UA stylesheet | `css/`, tinycss2, cssselect2 |
 | `internal/fonts` | OpenType parsing, system font library and matching, TrueType/CFF subsetting | fontconfig, fontTools |
-| `internal/text` | Shaping (cmap, kerning, ligatures, fallback) and line break opportunities | Pango, HarfBuzz |
+| `internal/text` | Font selection and fallback, runs, spacing, small caps emulation, line break opportunities | Pango |
+| `internal/otl` | OpenType shaping: normalization, GSUB, GPOS, GDEF, kern table, fallback mark positioning | HarfBuzz |
+| `internal/unorm` | Unicode canonical (de)composition and combining classes | GLib, HarfBuzz |
 | `internal/hyphen` | Hyphenation patterns (Liang's algorithm, TeX and Hunspell patterns) | Pyphen |
 | `internal/bidi` | Unicode bidirectional algorithm and Arabic joining data | FriBidi |
 | `internal/layout` | Box generation and anonymous boxes, block/inline/float/table/flex/grid/column/absolute/page layout | `formatting_structure/`, `layout/` |
@@ -416,6 +441,8 @@ golang.org/x/image (BSD 3-Clause, The Go Authors), and the sRGB profile
 in `internal/draw` is the International Color Consortium's
 `sRGB2014.icc`, freely redistributable. The Brotli static dictionary and
 tables in `internal/brotli` come from the Brotli reference implementation
-(MIT, see `internal/brotli/LICENSE`); the BC6H/BC7 partition and bit
+(MIT, see `internal/brotli/LICENSE`); the language tag table in
+`internal/otl` comes from HarfBuzz (Old MIT, see
+`internal/otl/LICENSE.harfbuzz`); the BC6H/BC7 partition and bit
 layout tables in `internal/images/bc_tables.go` come from Pillow
 (MIT-CMU license).

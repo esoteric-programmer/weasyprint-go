@@ -13,11 +13,28 @@ import (
 )
 
 type glyphRun struct {
-	face  *fonts.Face
-	size  float64
-	x     float64
-	items []any
-	text  []string
+	face   *fonts.Face
+	size   float64
+	x, y   float64 // start, y relative to the baseline (down)
+	offset bool    // a single offset glyph
+	items  []any
+	text   []string
+}
+
+// glyphText returns the text of glyph i for text extraction: the text of
+// its cluster, or its own character in clusters of several glyphs.
+func glyphText(runes []rune, glyphs []text.Glyph, i int) string {
+	g := glyphs[i]
+	same := func(j int) bool {
+		return j >= 0 && j < len(glyphs) && glyphs[j].Start == g.Start && glyphs[j].End == g.End
+	}
+	if !same(i-1) && !same(i+1) {
+		return string(runes[g.Start:g.End])
+	}
+	if g.Char != 0 {
+		return string(g.Char)
+	}
+	return ""
 }
 
 func (cv *canvas) fontName(f *fonts.Font) (string, *fontEntry) {
@@ -47,8 +64,11 @@ func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float
 			}
 			continue
 		}
-		if cur == nil || cur.face != g.Face || cur.size != g.Size {
-			cur = &glyphRun{face: g.Face, size: g.Size, x: x}
+		// Glyphs offset from their pen position (attached marks) get a
+		// run of their own.
+		offset := g.XOff != 0 || g.YOff != 0
+		if cur == nil || cur.face != g.Face || cur.size != g.Size || offset || cur.offset {
+			cur = &glyphRun{face: g.Face, size: g.Size, x: x + g.XOff, y: -g.YOff, offset: offset}
 			runs = append(runs, cur)
 		}
 		natural := g.Face.Font.Advance(g.ID) * g.Size / g.Face.Font.UnitsPerEm
@@ -58,12 +78,12 @@ func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float
 		}
 		if g.Face.Font.HasColorBitmaps() {
 			if im := cv.r.colorGlyph(g.Face.Font, g.ID); im != nil {
-				colored = append(colored, colorGlyph{im, x, g.Size, g.Face.Font, g.ID})
+				colored = append(colored, colorGlyph{im, x + g.XOff, g.Size, g.Face.Font, g.ID})
 			}
 		}
 		_, e := cv.fontName(g.Face.Font)
-		cur.items = append(cur.items, e.code(g.ID, string(runes[g.Start:g.End])))
-		if d := want - natural; math.Abs(d) > 1e-6 {
+		cur.items = append(cur.items, e.code(g.ID, glyphText(runes, glyphs, i)))
+		if d := want - natural; math.Abs(d) > 1e-6 && !offset {
 			cur.items = append(cur.items, -d*1000/g.Size)
 		}
 		x += want
@@ -81,7 +101,7 @@ func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float
 		if r.face.SynthItalic {
 			skew = -0.2
 		}
-		cv.c.SetTextMatrix(1, 0, skew, -1, r.x, y)
+		cv.c.SetTextMatrix(1, 0, skew, -1, r.x, y+r.y)
 		if r.face.SynthBold {
 			cv.c.SetTextRender(2)
 			cv.c.SetStrokeRGB(color.R, color.G, color.B)

@@ -79,7 +79,9 @@ type FontFaceRule struct {
 	Stretch      string
 	UnicodeRange [][2]rune
 	BaseURL      string
-	Features     []FontFeature
+	// Features are the features of the font-variant and
+	// font-feature-settings descriptors.
+	Features []FontFeature
 }
 
 // ColorProfileRule is an @color-profile rule.
@@ -99,10 +101,12 @@ type FontSource struct {
 
 // Stylesheet is a parsed stylesheet.
 type Stylesheet struct {
-	Origin        Origin
-	Rules         []*StyleRule
-	PageRules     []*PageRule
-	FontFaces     []*FontFaceRule
+	Origin    Origin
+	Rules     []*StyleRule
+	PageRules []*PageRule
+	FontFaces []*FontFaceRule
+	// FeatureValues are the @font-feature-values by lowercase family.
+	FeatureValues map[string]FeatureValues
 	CounterStyles map[string]*CounterStyle
 	ColorProfiles []*ColorProfileRule
 	BaseURL       string
@@ -404,6 +408,26 @@ func (sh *Stylesheet) addRules(rules []Rule, baseURL string, env *Env, depth int
 			if ff := parseFontFace(r.Content, baseURL); ff != nil {
 				sh.FontFaces = append(sh.FontFaces, ff)
 			}
+		case "font-feature-values":
+			families, fv := parseFontFeatureValues(r.Prelude, r.Content)
+			for _, fam := range families {
+				if sh.FeatureValues == nil {
+					sh.FeatureValues = map[string]FeatureValues{}
+				}
+				cur := sh.FeatureValues[fam]
+				if cur == nil {
+					cur = FeatureValues{}
+					sh.FeatureValues[fam] = cur
+				}
+				for typ, vals := range fv {
+					if cur[typ] == nil {
+						cur[typ] = map[string][]int{}
+					}
+					for name, v := range vals {
+						cur[typ][name] = v
+					}
+				}
+			}
 		case "counter-style":
 			prelude := RemoveWS(r.Prelude)
 			if len(prelude) == 1 && prelude[0].Type == TIdent {
@@ -614,6 +638,12 @@ func parseFontFace(content []Token, baseURL string) *FontFaceRule {
 	decls, _ := ParseDeclarations(content)
 	ff := &FontFaceRule{Style: "normal", Weight: [2]float64{400, 400}, Stretch: "normal", BaseURL: baseURL}
 	ctx := &ParseCtx{BaseURL: baseURL}
+	var settings Value
+	variant := map[PropID]Value{}
+	defer func() {
+		ff.Features = FontFeatures("", variant[PFontVariantLigatures], variant[PFontVariantPosition], variant[PFontVariantCaps],
+			variant[PFontVariantNumeric], variant[PFontVariantAlternates], variant[PFontVariantEastAsian], settings)
+	}()
 	for _, d := range decls {
 		v := RemoveWS(d.Value)
 		switch d.Name {
@@ -681,8 +711,13 @@ func parseFontFace(content []Token, baseURL string) *FontFaceRule {
 		case "unicode-range":
 			ff.UnicodeRange = parseUnicodeRange(Serialize(d.Value))
 		case "font-feature-settings":
-			if f, ok := parseFontFeatures(v, ctx).([]FontFeature); ok {
-				ff.Features = f
+			settings = parseFontFeatures(v, ctx)
+		case "font-variant":
+			if pv, ok := expandFontVariant(v, ctx); ok {
+				variant = map[PropID]Value{}
+				for _, p := range pv {
+					variant[p.ID] = p.Value
+				}
 			}
 		}
 	}

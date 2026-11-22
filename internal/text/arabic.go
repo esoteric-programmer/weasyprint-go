@@ -87,30 +87,6 @@ func arabicForms(runes []rune) []uint8 {
 	return forms
 }
 
-// arabicGlyph returns the glyph of a letter in a contextual form, using
-// the font's GSUB features or, without them, the Unicode presentation
-// forms.
-func arabicGlyph(f *fonts.Font, r rune, form uint8, gid uint16) uint16 {
-	if form == formNone || gid == 0 {
-		return gid
-	}
-	sub := f.Arabic()
-	if g, ok := sub.Forms[form-1][gid]; ok {
-		return g
-	}
-	if len(sub.Forms[1]) > 0 || len(sub.Forms[2]) > 0 {
-		return gid // the font shapes with GSUB; no special form
-	}
-	if pf, ok := bidi.PresentationForms[r]; ok {
-		if cp := pf[form-1]; cp != 0 {
-			if g := f.GlyphIndex(cp); g != 0 {
-				return g
-			}
-		}
-	}
-	return gid
-}
-
 // lamAlef returns the presentation-form ligature of lam followed by an
 // alef, for fonts without GSUB ligatures.
 func lamAlef(f *fonts.Font, lamForm uint8, alef rune) uint16 {

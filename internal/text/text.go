@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/fonts"
+	"github.com/esoteric-programmer/weasyprint-go/internal/otl"
 )
 
 // Spec describes the font and spacing used to shape text.
@@ -21,12 +22,18 @@ type Spec struct {
 	Size          float64 // px
 	LetterSpacing float64
 	WordSpacing   float64
-	SmallCaps     bool
-	AllSmallCaps  bool
-	NoKerning     bool
-	NoLigatures   bool
-	RTL           bool   // base direction of the text
-	Lang          string // language of the text
+	// Caps is the font-variant-caps value ("" or "normal" for none):
+	// the font's features are used, or small caps are emulated like
+	// Pango does.
+	Caps string
+	// Features are OpenType feature settings (font-variant-* and
+	// font-feature-settings), applied after the default features.
+	Features []otl.Feature
+	// FamilyFeatures are features for faces of some families (lowercase
+	// names), from font-variant-alternates and @font-feature-values.
+	FamilyFeatures map[string][]otl.Feature
+	RTL            bool   // base direction of the text
+	Lang           string // language of the text
 }
 
 func (s Spec) key() string {
@@ -64,8 +71,16 @@ type Glyph struct {
 	Face    *fonts.Face
 	Size    float64 // font size in px
 	Advance float64 // px, including spacing and kerning
-	Start   int     // rune range in the shaped text
-	End     int
+	// XOff and YOff offset the glyph from its pen position (px, y up),
+	// for attached marks.
+	XOff, YOff float64
+	// Start and End are the rune range of the glyph's cluster in the
+	// shaped text: all the glyphs of a cluster have the same range.
+	Start int
+	End   int
+	// Char is the character of the glyph in clusters of several glyphs
+	// (0 if unknown), for text extraction.
+	Char rune
 }
 
 // Shaped is the result of shaping a text.
@@ -349,156 +364,8 @@ func (s *Shaper) Shape(text string, spec Spec) *Shaped {
 		}
 		runeFace[i] = face
 	}
-	// Arabic contextual forms.
-	var forms []uint8
-	if hasArabic(runes) {
-		forms = arabicForms(runes)
-	}
-	formGlyph := func(i int) uint16 {
-		f := runeFace[i]
-		if f == nil {
-			return 0
-		}
-		g := f.Font.GlyphIndex(runes[i])
-		if forms != nil {
-			g = arabicGlyph(f.Font, runes[i], forms[i], g)
-		}
-		return g
-	}
-	x := 0.0
-	for i := 0; i < len(runes); {
-		r := runes[i]
-		face := runeFace[i]
-		size := spec.Size
-		cr := r
-		// Small caps: the font's smcp (and c2sc) glyphs, or uppercase
-		// letters at 0.8 times the size, as Pango emulates them.
-		var smcp, c2sc map[uint16]uint16
-		if spec.SmallCaps && face != nil {
-			smcp = face.Font.SingleSubstitutions("smcp")
-			if spec.AllSmallCaps {
-				c2sc = face.Font.SingleSubstitutions("c2sc")
-			}
-			if len(smcp) == 0 {
-				smcp = nil
-				if unicode.IsLower(r) || (spec.AllSmallCaps && unicode.IsUpper(r)) {
-					if up := unicode.ToUpper(r); face.Font.HasRune(up) {
-						cr = up
-						size = spec.Size * 0.8
-					}
-				}
-			}
-		}
-		g := Glyph{Face: face, Size: size, Start: i, End: i + 1}
-		if face != nil && !isDefaultIgnorable(r) && r != '\n' && r != '\r' {
-			if r == '\t' {
-				g.ID = face.Font.GlyphIndex(' ')
-			} else {
-				g.ID = face.Font.GlyphIndex(cr)
-			}
-			if r == 0xa0 && g.ID == 0 {
-				g.ID = face.Font.GlyphIndex(' ')
-			}
-			if smcp != nil {
-				if s, ok := c2sc[g.ID]; ok {
-					g.ID = s
-				} else if s, ok := smcp[g.ID]; ok {
-					g.ID = s
-				}
-			}
-			arabicLig := false
-			if forms != nil && forms[i] != formNone {
-				g.ID = arabicGlyph(face.Font, r, forms[i], g.ID)
-				// Required ligatures (lam-alef).
-				sub := face.Font.Arabic()
-				for _, lig := range sub.Ligatures[g.ID] {
-					n := len(lig.Components)
-					if i+1+n > len(runes) {
-						continue
-					}
-					ok := true
-					for k, comp := range lig.Components {
-						if runeFace[i+1+k] != face || formGlyph(i+1+k) != comp {
-							ok = false
-							break
-						}
-					}
-					if ok {
-						g.ID = lig.Glyph
-						g.End = i + 1 + n
-						arabicLig = true
-						break
-					}
-				}
-				if !arabicLig && len(sub.Ligatures) == 0 && r == 0x644 && i+1 < len(runes) && runeFace[i+1] == face {
-					if lg := lamAlef(face.Font, forms[i], runes[i+1]); lg != 0 {
-						g.ID = lg
-						g.End = i + 2
-						arabicLig = true
-					}
-				}
-			}
-			g.Advance = pangoUnits(face.Font.Advance(g.ID) * size / face.Font.UnitsPerEm)
-			// Ligatures.
-			if !arabicLig && !spec.NoLigatures && spec.LetterSpacing == 0 && !spec.SmallCaps {
-				if ligs := face.Font.Ligatures(g.ID); len(ligs) > 0 {
-					for _, lig := range ligs {
-						n := len(lig.Components)
-						if i+1+n > len(runes) {
-							continue
-						}
-						ok := true
-						for k, comp := range lig.Components {
-							rr := runes[i+1+k]
-							if runeFace[i+1+k] != face || face.Font.GlyphIndex(rr) != comp {
-								ok = false
-								break
-							}
-						}
-						if ok {
-							g.ID = lig.Glyph
-							g.End = i + 1 + n
-							g.Advance = pangoUnits(face.Font.Advance(g.ID) * size / face.Font.UnitsPerEm)
-							break
-						}
-					}
-				}
-			}
-		} else {
-			g.Advance = 0
-		}
-		// Spacing as Pango attributes (integer Pango units, truncated).
-		ls := math.Trunc(spec.LetterSpacing*1024) / 1024
-		if r == ' ' || r == 0xa0 || r == '\t' {
-			if spec.WordSpacing != 0 {
-				g.Advance += math.Trunc(spec.WordSpacing*1024+ls*1024) / 1024
-			} else {
-				g.Advance += ls
-			}
-		} else if r != '\n' && !isDefaultIgnorable(r) {
-			g.Advance += ls
-		}
-		// Kerning with the previous glyph.
-		if !spec.NoKerning && len(sh.Glyphs) > 0 {
-			prev := &sh.Glyphs[len(sh.Glyphs)-1]
-			if prev.Face == face && face != nil && prev.Size == size && prev.ID != 0 && g.ID != 0 {
-				if k := face.Font.Kern(prev.ID, g.ID); k != 0 {
-					adj := pangoUnits(k * size / face.Font.UnitsPerEm)
-					prev.Advance += adj
-					x += adj
-					sh.Pos[i] = x
-				}
-			}
-		}
-		n := g.End - g.Start
-		for k := 0; k < n; k++ {
-			sh.Pos[i+k] = x + g.Advance*float64(k)/float64(n)
-		}
-		x += g.Advance
-		sh.Glyphs = append(sh.Glyphs, g)
-		i = g.End
-	}
-	sh.Pos[len(runes)] = x
+	s.clusterFaces(spec, runes, runeFace, sameRun, runScript)
+	s.shapeRuns(sh, runeFace, levels, runScript)
 	return sh
 }
 
