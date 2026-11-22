@@ -1339,12 +1339,22 @@ var (
 	PBleedTop        = def("bleed-top", false, Keyword("auto"), lengthKw(true, false, "auto"))
 	PBleedBottom     = def("bleed-bottom", false, Keyword("auto"), lengthKw(true, false, "auto"))
 	PMarks           = def("marks", false, Keyword("none"), func(ts []Token, _ *ParseCtx) Value {
+		if len(ts) == 1 && ts[0].IsIdent("none") {
+			return Keyword("none")
+		}
+		if len(ts) < 1 || len(ts) > 2 {
+			return nil
+		}
 		var out []string
 		for _, t := range ts {
 			if t.Type != TIdent {
 				return nil
 			}
-			out = append(out, t.Value)
+			k := strings.ToLower(t.Value)
+			if (k != "crop" && k != "cross") || (len(out) == 1 && out[0] == k) {
+				return nil
+			}
+			out = append(out, k)
 		}
 		return out
 	})

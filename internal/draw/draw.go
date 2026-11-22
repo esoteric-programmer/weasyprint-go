@@ -627,12 +627,16 @@ func (r *Renderer) drawPage(pi int, p *layout.Page, parent pdf.Ref) {
 	wPt, hPt := p.Width*k, p.Height*k
 	cv.c.Transform(k, 0, 0, -k, 0, hPt)
 	page := p.Box
-	// Page background, then the root (canvas) background over the whole page.
-	full := rect{0, 0, p.Width, p.Height}
+	// Page background (painted over the bleed area) with crop and cross
+	// marks, then the root (canvas) background over the page area.
+	pageArea := borderRect(page)
+	bleed := pageBleed(page.Style)
+	bleedArea := rect{-bleed[3], -bleed[0], p.Width + bleed[1] + bleed[3], p.Height + bleed[0] + bleed[2]}
 	cv.artifact(func() {
-		cv.drawBackgroundStyle(page.Style, page, &full, nil)
+		cv.drawBackgroundStyle(page.Style, page, &bleedArea, nil)
+		cv.drawMarks(page.Style, bleedArea, bleed)
 		if root, rootStyle := r.canvasBackgroundSource(page); rootStyle != nil {
-			cv.drawBackgroundStyle(rootStyle, root, &full, page)
+			cv.drawBackgroundStyle(rootStyle, root, &pageArea, page)
 		}
 		cv.drawBorders(page)
 	})
@@ -641,9 +645,12 @@ func (r *Renderer) drawPage(pi int, p *layout.Page, parent pdf.Ref) {
 	pd := pdf.Dict{
 		"Type":      pdf.Name("Page"),
 		"Parent":    parent,
-		"MediaBox":  []float64{0, 0, wPt, hPt},
+		"MediaBox":  []float64{-bleed[3] * k, -bleed[2] * k, wPt + bleed[1]*k, hPt + bleed[0]*k},
 		"Contents":  contentRef,
 		"Resources": cv.resources(),
+		"TrimBox":   []float64{0, 0, wPt, hPt},
+		// Like WeasyPrint, the PDF bleed box is at most 10pt from the trim box.
+		"BleedBox": []float64{-math.Min(10, bleed[3]*k), -math.Min(10, bleed[2]*k), wPt + math.Min(10, bleed[1]*k), hPt + math.Min(10, bleed[0]*k)},
 	}
 	if r.tags != nil {
 		pd["Tabs"] = pdf.Name("S")
