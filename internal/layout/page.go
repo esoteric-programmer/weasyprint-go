@@ -47,15 +47,18 @@ func (c *Context) pageGeometry(style *css.Style) *Box {
 	return page
 }
 
-// FirstPageSize returns the size of the first page, for viewport units.
-func (c *Context) FirstPageSize(root *Box) (float64, float64) {
+// FirstPageSize returns the page area and the page box of the first page,
+// for viewport units.
+func (c *Context) FirstPageSize(root *Box) (area, box [2]float64) {
 	name := ""
 	if root != nil {
 		name, _ = pageValues(root)
 	}
 	st := c.R.PageStyle(css.PageType{Name: name, Side: "right", First: true})
 	p := c.pageGeometry(st)
-	return p.W + p.ML + p.MR + p.PL + p.PR + p.BL + p.BR, p.H + p.MT + p.MB + p.PT + p.PB + p.BT + p.BB
+	area = [2]float64{p.W, p.H}
+	box = [2]float64{p.W + p.ML + p.MR + p.PL + p.PR + p.BL + p.BR, p.H + p.MT + p.MB + p.PT + p.PB + p.BT + p.BB}
+	return area, box
 }
 
 // LayoutDocument lays out the root box into pages.

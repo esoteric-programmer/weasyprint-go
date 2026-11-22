@@ -19,6 +19,7 @@ type glyphRun struct {
 	x, y   float64 // start, y relative to the baseline (down)
 	offset bool    // a single offset glyph
 	actual string  // ActualText of a single glyph
+	mapped bool    // glyphs of a mapped cluster
 	items  []any
 	text   []string
 }
@@ -68,18 +69,32 @@ func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float
 		}
 		_, e := cv.fontName(g.Face.Font)
 		text := glyphText(runes, glyphs, i)
-		// A glyph already mapped to another text (emulated small caps,
-		// alternates...) gets its text as ActualText.
 		actual := ""
-		if prev := e.used[g.ID]; prev != "" && text != "" && prev != text {
+		// Glyphs of mapped characters (emulated small caps: "ß" drawn as
+		// "SS") stand for their own character; the cluster gets the
+		// original text as ActualText, in a run of its own.
+		inMapped := g.Mapped && i > 0 && glyphs[i-1].Mapped && glyphs[i-1].Start == g.Start && cur != nil && cur.mapped
+		if g.Mapped {
+			text = ""
+			if g.Char != 0 {
+				text = string(g.Char)
+			}
+			if !inMapped {
+				actual = string(runes[g.Start:g.End])
+			}
+		} else if prev := e.used[g.ID]; prev != "" && text != "" && prev != text {
+			// A glyph already mapped to another text (alternates...)
+			// gets its text as ActualText.
 			actual = text
 		}
 		// Glyphs offset from their pen position (attached marks) and
 		// glyphs with ActualText get a run of their own.
 		offset := g.XOff != 0 || g.YOff != 0
 		isolate := offset || actual != ""
-		if cur == nil || cur.face != g.Face || cur.size != g.Size || isolate || cur.offset {
-			cur = &glyphRun{face: g.Face, size: g.Size, x: x + g.XOff, y: -g.YOff, offset: isolate, actual: actual}
+		if inMapped && !offset && cur.face == g.Face && cur.size == g.Size {
+			// Same run as the previous glyph of the cluster.
+		} else if cur == nil || cur.face != g.Face || cur.size != g.Size || isolate || cur.offset {
+			cur = &glyphRun{face: g.Face, size: g.Size, x: x + g.XOff, y: -g.YOff, offset: isolate, actual: actual, mapped: g.Mapped && !offset}
 			runs = append(runs, cur)
 		}
 		natural := g.Face.Font.Advance(g.ID) * g.Size / g.Face.Font.UnitsPerEm
@@ -93,7 +108,7 @@ func (cv *canvas) drawGlyphs(runes []rune, glyphs []text.Glyph, advances []float
 			}
 		}
 		cur.items = append(cur.items, e.code(g.ID, text))
-		if d := want - natural; math.Abs(d) > 1e-6 && !isolate {
+		if d := want - natural; math.Abs(d) > 1e-6 && (!isolate || cur.mapped) {
 			cur.items = append(cur.items, -d*1000/g.Size)
 		}
 		x += want

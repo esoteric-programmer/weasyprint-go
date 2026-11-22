@@ -123,7 +123,7 @@ func (b *Builder) firstLetter(parent *Box, styles []*css.Style) letterResult {
 		ls := mergedStyle(b.R, parent.Style, styles, "first-letter")
 		ts := b.R.AnonymousStyle(ls)
 		tb := &Box{Kind: KText, Style: ts, Element: ch.Element, Anonymous: true, RawText: letter,
-			Text: transformText(letter, ts.Kw(css.PTextTransform))}
+			Text: transformText(letter, ts.Kw(css.PTextTransform), langCode(ts))}
 		var lb *Box
 		if ls.IsFloat() {
 			ls.Set(css.PDisplay, css.Keyword("block"))
@@ -219,7 +219,7 @@ func (c *Context) restyleBox(b *Box, oldParent, newParent *css.Style) *Box {
 				raw = b.Text
 			}
 			// Positions in the line must not move: keep the same length.
-			if t := transformText(raw, newT); len([]rune(t)) == len([]rune(b.Text)) {
+			if t := transformText(raw, newT, langCode(nb.Style)); len([]rune(t)) == len([]rune(b.Text)) {
 				nb.Text = t
 			}
 		}

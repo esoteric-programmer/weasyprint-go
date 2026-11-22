@@ -248,39 +248,62 @@ func (s *Shaper) shapeRuns(sh *Shaped, runeFace []*fonts.Face, levels []uint8, r
 		capsOf[face] = c
 		return c
 	}
-	emulate := func(face *fonts.Face, r rune, sc int, rtl bool) (rune, bool) {
-		if caps == "" || face == nil {
-			return r, false
+	// Emulated caps, like Pango: the text is split in segments of
+	// lowercase letters and of other characters (spaces and controls go
+	// with the previous character, lowercase at the start of a face). The
+	// lowercase segments (the others for unicase, all for all-small-caps)
+	// are shaped at 0.8 times the size, with the lowercase letters
+	// uppercased by the full case mappings ("ß" → "SS").
+	emulated := func(i int) bool {
+		f := runeFace[i]
+		return caps != "" && f != nil && getCaps(f, runScript[i], level(i)%2 == 1).emulated
+	}
+	var mapped map[int][]rune // expanded case mappings, by rune index
+	small := make([]bool, n)
+	lower := make([]bool, n) // segment of lowercase letters
+	shapeText := make([]rune, n)
+	copy(shapeText, runes)
+	for i, r := range runes {
+		if !emulated(i) {
+			continue
 		}
-		if !getCaps(face, sc, rtl).emulated {
-			return r, false
+		if capsSpace(r) {
+			lower[i] = i == 0 || runeFace[i-1] != runeFace[i] || lower[i-1]
+		} else {
+			lower[i] = unicode.IsLower(r)
 		}
 		switch caps {
-		case "small-caps", "all-small-caps", "petite-caps", "all-petite-caps":
-			if unicode.IsLower(r) {
-				if up := unicode.ToUpper(r); face.Font.HasRune(up) {
-					return up, true
-				}
-			} else if (caps == "all-small-caps" || caps == "all-petite-caps") && unicode.IsUpper(r) {
-				return r, true
-			}
+		case "small-caps", "petite-caps":
+			small[i] = lower[i]
+		case "all-small-caps", "all-petite-caps":
+			small[i] = true
 		case "unicase":
-			if unicode.IsUpper(r) {
-				return r, true
-			}
+			small[i] = !lower[i]
 		}
-		return r, false
-	}
-	shapeText := make([]rune, n)
-	small := make([]bool, n)
-	for i, r := range runes {
-		shapeText[i], small[i] = emulate(runeFace[i], r, runScript[i], level(i)%2 == 1)
+		if !small[i] || !unicode.IsLower(r) || caps == "unicase" {
+			continue
+		}
+		up := []rune(unorm.UpperRune(r))
+		ok := true
+		for _, u := range up {
+			ok = ok && runeFace[i].Font.HasRune(u)
+		}
+		switch {
+		case !ok:
+		case len(up) == 1:
+			shapeText[i] = up[0]
+		case runScript[i] != 1:
+			if mapped == nil {
+				mapped = map[int][]rune{}
+			}
+			mapped[i] = up
+		}
 	}
 	// Runs.
 	var runs []shapeRun
 	for i := 0; i < n; {
 		j := i + 1
-		for j < n && runeFace[j] == runeFace[i] && level(j) == level(i) && runScript[j] == runScript[i] && small[j] == small[i] {
+		for j < n && runeFace[j] == runeFace[i] && level(j) == level(i) && runScript[j] == runScript[i] && small[j] == small[i] && lower[j] == lower[i] {
 			j++
 		}
 		runs = append(runs, shapeRun{i, j, runeFace[i], level(i), runScript[i], small[i]})
@@ -305,6 +328,31 @@ func (s *Shaper) shapeRuns(sh *Shaped, runeFace []*fonts.Face, levels []uint8, r
 		}
 		plan := planFor(r.face, r.script, rtl, extra)
 		in := otl.Input{Runes: shapeText[r.start:r.end], Offset: r.start, Size: size}
+		// Expanded case mappings: shaped from offset 0, the clusters
+		// mapped back to the original characters.
+		var origin []int
+		if mapped != nil {
+			for k := r.start; k < r.end; k++ {
+				if _, ok := mapped[k]; ok {
+					origin = make([]int, 0, r.end-r.start+4)
+					break
+				}
+			}
+		}
+		if origin != nil {
+			var rs []rune
+			for k := r.start; k < r.end; k++ {
+				m, ok := mapped[k]
+				if !ok {
+					m = shapeText[k : k+1]
+				}
+				for range m {
+					origin = append(origin, k)
+				}
+				rs = append(rs, m...)
+			}
+			in = otl.Input{Runes: rs, Size: size}
+		}
 		var lamAlefs map[int]uint16
 		if forms != nil && r.script == 1 {
 			in.Masks = make([]uint32, r.end-r.start)
@@ -325,6 +373,11 @@ func (s *Shaper) shapeRuns(sh *Shaped, runeFace []*fonts.Face, levels []uint8, r
 			}
 		}
 		out := plan.Shape(in)
+		for gi := range out {
+			if origin != nil {
+				out[gi].Cluster = origin[out[gi].Cluster]
+			}
+		}
 		k := 1024.0
 		for gi := 0; gi < len(out); gi++ {
 			og := &out[gi]
@@ -339,7 +392,7 @@ func (s *Shaper) shapeRuns(sh *Shaped, runeFace []*fonts.Face, levels []uint8, r
 			}
 			sh.Glyphs = append(sh.Glyphs, Glyph{ID: id, Face: r.face, Size: size,
 				Advance: float64(og.XAdvance) / k, XOff: float64(og.XOffset) / k, YOff: float64(og.YOffset) / k,
-				Start: og.Cluster, Char: og.Rune()})
+				Start: og.Cluster, Char: og.Rune(), Mapped: r.small && (shapeText[og.Cluster] != runes[og.Cluster] || mapped[og.Cluster] != nil)})
 		}
 	}
 	gl := sh.Glyphs
@@ -485,4 +538,22 @@ func (s *Shaper) positionForeignMarks(runes []rune, gl []Glyph) {
 		}
 		k = e - 1
 	}
+}
+
+// capsEmulated reports whether font-variant-caps is emulated for a face
+// (the font lacks the OpenType features).
+// capsSpace reports whether r goes with the previous character in caps
+// emulation (Pango's consider_as_space).
+func capsSpace(r rune) bool {
+	return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Cs, unicode.Zl, unicode.Zp, unicode.Zs)
+}
+
+func capsEmulated(face *fonts.Face, spec Spec, sc int) bool {
+	switch spec.Caps {
+	case "", "normal", "titling-caps":
+		return false
+	}
+	p := otl.NewPlan(face.Font, otl.Options{Scripts: scriptTagsOf(sc), Language: spec.Lang})
+	_, ok := capsFeatures(p.HasFeature, spec.Caps)
+	return !ok
 }

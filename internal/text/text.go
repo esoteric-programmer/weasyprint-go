@@ -3,6 +3,7 @@
 package text
 
 import (
+	"fmt"
 	"github.com/esoteric-programmer/weasyprint-go/internal/bidi"
 	"math"
 	"strconv"
@@ -92,6 +93,9 @@ type Glyph struct {
 	// Char is the character of the glyph in clusters of several glyphs
 	// (0 if unknown), for text extraction.
 	Char rune
+	// Mapped marks glyphs of characters changed by the shaper (emulated
+	// small caps): the cluster's text differs from the glyphs'.
+	Mapped bool
 }
 
 // Shaped is the result of shaping a text.
@@ -115,12 +119,13 @@ type Shaper struct {
 	strong      map[string][]bool
 	scriptFaces map[string][]*fonts.Face
 	fallbacks   map[string]*fonts.Face
+	ratios      map[string]float64
 }
 
 // NewShaper returns a shaper.
 func NewShaper(lib *fonts.Library) *Shaper {
 	return &Shaper{Lib: lib, faces: map[string][]*fonts.Face{}, strong: map[string][]bool{},
-		scriptFaces: map[string][]*fonts.Face{}, fallbacks: map[string]*fonts.Face{}}
+		scriptFaces: map[string][]*fonts.Face{}, fallbacks: map[string]*fonts.Face{}, ratios: map[string]float64{}}
 }
 
 // fallback finds a face for a rune that the faces of a spec do not cover:
@@ -271,6 +276,80 @@ func (s *Shaper) PrimaryMetrics(spec Spec) Metrics {
 }
 
 // firstLoaded returns the first face whose font can be loaded.
+// CharRatio returns the size of the font-relative unit ("ex", "cap",
+// "ch" or "ic") in ems, measured like WeasyPrint on the text laid out at
+// a size of 1000: the ink height of "x" (with the font-variant of the
+// spec: emulated small caps give a small "X"), the advance of "0" or of
+// "水", rounded to 5 decimals (0.5 when it is 0). "cap" is the font's cap
+// height (WeasyPrint measures the advance of "O" instead).
+func (s *Shaper) CharRatio(spec Spec, unit string) float64 {
+	spec.Size = 1000
+	spec.LetterSpacing, spec.WordSpacing = 0, 0
+	key := unit + "\x00" + spec.key() + "|" + spec.Caps + fmt.Sprint(spec.Features, spec.FamilyFeatures)
+	s.mu.Lock()
+	r, ok := s.ratios[key]
+	s.mu.Unlock()
+	if ok {
+		return r
+	}
+	measure := 0.0
+	switch unit {
+	case "ex":
+		sh := s.Shape("x", spec)
+		for _, g := range sh.Glyphs {
+			if g.Face == nil {
+				continue
+			}
+			if _, _, _, y1, ok := g.Face.Font.GlyphExtents(g.ID); ok {
+				// Pango units, like the ink rectangle.
+				measure = math.Max(measure, pangoUnits(float64(y1)*g.Size/g.Face.Font.UnitsPerEm+g.YOff))
+			}
+		}
+	case "cap":
+		spec.Caps = ""
+		measure = s.PrimaryMetrics(spec).CapHeight
+		if measure <= 0 {
+			sh := s.Shape("H", spec)
+			for _, g := range sh.Glyphs {
+				if g.Face == nil {
+					continue
+				}
+				if _, _, _, y1, ok := g.Face.Font.GlyphExtents(g.ID); ok {
+					measure = math.Max(measure, float64(y1)*g.Size/g.Face.Font.UnitsPerEm)
+				}
+			}
+		}
+	case "ch", "ic":
+		c := "0"
+		if unit == "ic" {
+			c = "水"
+		}
+		sh := s.Shape(c, spec)
+		measure = sh.Pos[len(sh.Runes)]
+	}
+	r = math.Round(measure/spec.Size*1e5) / 1e5
+	if r == 0 {
+		r = 0.5
+	}
+	s.mu.Lock()
+	s.ratios[key] = r
+	s.mu.Unlock()
+	return r
+}
+
+// StrutMetrics returns the metrics of the strut (the layout of a space,
+// as WeasyPrint measures it): the primary metrics, scaled down when small
+// caps are emulated, as Pango scales the font of the space (except for
+// unicase).
+func (s *Shaper) StrutMetrics(spec Spec) Metrics {
+	if spec.Caps != "" && spec.Caps != "unicase" {
+		if f := firstLoaded(s.facesForScript(spec, langScript(spec.Lang))); f != nil && capsEmulated(f, spec, langScript(spec.Lang)) {
+			spec.Size *= 0.8
+		}
+	}
+	return s.PrimaryMetrics(spec)
+}
+
 func firstLoaded(faces []*fonts.Face) *fonts.Face {
 	for _, f := range faces {
 		if f.Loaded() {

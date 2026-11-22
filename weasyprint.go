@@ -497,6 +497,15 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	}
 
 	resolver.Viewport = defaultSize
+	resolver.PageBox = defaultSize
+	// Font-relative units, measured like WeasyPrint.
+	resolver.FontRatio = func(s *css.Style, unit string) float64 {
+		return shaper.CharRatio(layout.SpecFor(s), unit)
+	}
+	resolver.LineHeight = func(s *css.Style) float64 {
+		m := shaper.StrutMetrics(layout.SpecFor(s))
+		return s.LineHeight(m.Ascent + m.Descent)
+	}
 	resolver.ResolveAll()
 	hyphens, err := hyphenationRules(opts.HyphenationRules, opts.Hyphenation, warn)
 	if err != nil {
@@ -511,8 +520,8 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	ctx.Hyphenation = hyphen.Source(opts.Hyphenation)
 	ctx.Hyphens = hyphens
 	// Viewport units are relative to the first page size.
-	if w, hh := ctx.FirstPageSize(root); w != resolver.Viewport[0] || hh != resolver.Viewport[1] {
-		resolver.Viewport = [2]float64{w, hh}
+	if area, box := ctx.FirstPageSize(root); area != resolver.Viewport || box != resolver.PageBox {
+		resolver.Viewport, resolver.PageBox = area, box
 		resolver.ResolveAll()
 		root = builder.Build(h.root)
 		ctx = layout.NewContext(shaper, resolver, imgs, builder)

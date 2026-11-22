@@ -156,7 +156,10 @@ specificity, custom properties and `var()`, `calc()`/`min()`/`max()`/
 WeasyPrint), `@font-face`, `@counter-style`, `@page`. As in WeasyPrint,
 `@container` and `@scope` rules are ignored.
 
-**Values**: all absolute and font-relative units, viewport units, colors
+**Values**: all absolute and font-relative units (`ex`, `ch`, `ic`, `lh`
+and their root variants measured on the fonts like WeasyPrint), viewport
+units (relative to the page area of the first page; `pvw`, `pvh`... to its
+page box), colors
 (named, hex, `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`,
 `oklch()`, `color()` with predefined color spaces or `@color-profile`,
 `device-cmyk()`, `light-dark()` with `color-scheme`, `currentColor`,
@@ -178,7 +181,9 @@ linear/radial/repeating gradients (with color hints and transparency),
   (UAX #9, `direction`, `dir`), Arabic shaping (joining forms, lam-alef),
   `white-space`,
   `text-align` including `justify`, `text-indent`, `letter-spacing`,
-  `word-spacing`, `text-transform`, soft hyphens, automatic hyphenation
+  `word-spacing`, `text-transform` (full Unicode case mappings, "ß" →
+  "SS", and WeasyPrint's Greek, Turkish, Azerbaijani, Lithuanian and
+  Dutch tailorings), soft hyphens, automatic hyphenation
   (`hyphens: auto` with the `lang` attribute, `hyphenate-character`,
   `hyphenate-limit-chars`, `hyphenate-limit-zone`; LaTeX's patterns for
   about 70 languages are built in, see below), `overflow-wrap`,
@@ -398,7 +403,12 @@ reproduced:
   default color hint at 50% of the whole gradient line is used for every
   segment instead of the middle of each segment.
 * `text-transform: capitalize` uppercases digraphs such as "ǆ" instead of
-  using their titlecase form ("ǅ").
+  using their titlecase form ("ǅ"; "ß" gives "Ss", not "SS").
+* The `cap` unit is the advance width of "O" instead of the cap height.
+* With emulated small caps, a glyph keeps the text of its first use in
+  the PDF without ActualText, so the extracted text can have the wrong
+  case ("CapS" for "Caps"); here, the glyphs stand for their capital and
+  the original text is given as ActualText.
 * `::first-line` styles are applied again to the first line of every
   page a paragraph continues on, override the styles of the elements on
   the line (and of `::first-letter`), and a floated first letter is

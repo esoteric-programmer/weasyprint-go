@@ -96,7 +96,7 @@ func (c *Context) strut(s *css.Style) (float64, float64) {
 	if s.FontSize() == 0 {
 		return 0, 0
 	}
-	m := c.Shaper.PrimaryMetrics(SpecFor(s))
+	m := c.Shaper.StrutMetrics(SpecFor(s))
 	textH := m.Ascent + m.Descent
 	lh := s.LineHeight(textH)
 	baseline := m.Ascent + (lh-textH)/2
@@ -104,9 +104,9 @@ func (c *Context) strut(s *css.Style) (float64, float64) {
 	return lh, baseline
 }
 
+// xHeight returns the "ex" of a style, for vertical-align: middle.
 func (c *Context) xHeight(s *css.Style) float64 {
-	m := c.Shaper.PrimaryMetrics(SpecFor(s))
-	return m.XHeight
+	return s.FontSize() * c.Shaper.CharRatio(SpecFor(s), "ex")
 }
 
 // ---------------------------------------------------------------- flattening
@@ -1168,7 +1168,7 @@ func (c *Context) textMetrics(tb *Box) (float64, float64) {
 			if g.End <= tb.Start || g.Start >= tb.End || g.Face == nil {
 				continue
 			}
-			k := tb.Spec.Size / g.Face.Font.UnitsPerEm
+			k := g.Size / g.Face.Font.UnitsPerEm
 			a, d := g.Face.Font.Ascent*k, g.Face.Font.Descent*k
 			if !found || a > asc {
 				asc = a
@@ -1180,7 +1180,7 @@ func (c *Context) textMetrics(tb *Box) (float64, float64) {
 		}
 	}
 	if !found {
-		m := c.Shaper.PrimaryMetrics(SpecFor(tb.Style))
+		m := c.Shaper.StrutMetrics(SpecFor(tb.Style))
 		asc, desc = m.Ascent, m.Descent
 	}
 	return asc, desc

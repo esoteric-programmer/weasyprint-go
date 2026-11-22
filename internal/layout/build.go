@@ -3,7 +3,6 @@ package layout
 import (
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/fetch"
@@ -718,7 +717,7 @@ func (b *Builder) textBoxes(s string, style *css.Style) []*Box {
 		return nil
 	}
 	raw := s
-	s = transformText(s, style.Kw(css.PTextTransform))
+	s = transformText(s, style.Kw(css.PTextTransform), langCode(style))
 	if s == raw {
 		raw = ""
 	}
@@ -769,40 +768,6 @@ func processWhitespace(s, ws string) string {
 		res = append(res, r)
 	}
 	return string(res)
-}
-
-func transformText(s, t string) string {
-	switch t {
-	case "uppercase":
-		return strings.ToUpper(s)
-	case "lowercase":
-		return strings.ToLower(s)
-	case "capitalize":
-		rs := []rune(s)
-		start := true
-		for i, r := range rs {
-			if unicode.IsLetter(r) || unicode.IsDigit(r) {
-				if start {
-					rs[i] = unicode.ToTitle(r)
-				}
-				start = false
-			} else if unicode.IsSpace(r) || unicode.IsPunct(r) && r != '\'' && r != '’' {
-				start = true
-			}
-		}
-		return string(rs)
-	case "full-width":
-		rs := []rune(s)
-		for i, r := range rs {
-			if r == ' ' {
-				rs[i] = 0x3000
-			} else if r > 0x20 && r < 0x7f {
-				rs[i] = r + 0xfee0
-			}
-		}
-		return string(rs)
-	}
-	return s
 }
 
 // inlineSVG serializes an inline <svg> element and parses it as an image.

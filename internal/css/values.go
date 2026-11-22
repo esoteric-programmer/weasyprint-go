@@ -168,7 +168,12 @@ var lengthUnits = map[string]bool{
 	"px": true, "pt": true, "pc": true, "in": true, "cm": true, "mm": true,
 	"q": true, "em": true, "ex": true, "ch": true, "rem": true, "vw": true,
 	"vh": true, "vmin": true, "vmax": true, "lh": true, "rlh": true,
-	"cap": true, "ic": true, "rex": true, "rch": true,
+	"cap": true, "ic": true, "rex": true, "rch": true, "rcap": true, "ric": true,
+	"vi": true, "vb": true,
+	"lvw": true, "lvh": true, "lvi": true, "lvb": true, "lvmin": true, "lvmax": true,
+	"svw": true, "svh": true, "svi": true, "svb": true, "svmin": true, "svmax": true,
+	"dvw": true, "dvh": true, "dvi": true, "dvb": true, "dvmin": true, "dvmax": true,
+	"pvw": true, "pvh": true, "pvi": true, "pvb": true, "pvmin": true, "pvmax": true,
 }
 
 // absolute unit conversion to px

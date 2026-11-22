@@ -30,8 +30,18 @@ type Resolver struct {
 	ColorProfiles []*ColorProfileRule
 	PageRules     []*PageRule
 	BaseURL       string
-	Viewport      [2]float64
-	Doc           *html.Node
+	// Viewport is the page area of the first page (viewport units),
+	// PageBox its page box ("pvw" units).
+	Viewport [2]float64
+	PageBox  [2]float64
+	Doc      *html.Node
+	// FontRatio, if set, returns the size of a font-relative unit ("ex",
+	// "cap", "ch" or "ic") in ems for a style whose font properties are
+	// computed. The ratios default to 0.5.
+	FontRatio func(s *Style, unit string) float64
+	// LineHeight, if set, returns the used line height of a computed
+	// style, for "lh" units (1.2em by default).
+	LineHeight func(s *Style) float64
 	// Hints returns presentational hint declarations for an element.
 	Hints func(e *html.Node) []Decl
 
@@ -60,6 +70,7 @@ func NewResolver(doc *html.Node, sheets []*Stylesheet, baseURL string) *Resolver
 		cascades:      map[pseudoKey]*cascaded{},
 		pageCache:     map[string]*Style{},
 		Viewport:      [2]float64{793.7007874, 1122.519685},
+		PageBox:       [2]float64{793.7007874, 1122.519685},
 	}
 	r.index = ruleIndex{byID: map[string][]ruleEntry{}, byClass: map[string][]ruleEntry{}, byTag: map[string][]ruleEntry{}}
 	for _, sh := range sheets {
@@ -479,12 +490,40 @@ type computeCtx struct {
 	fontSize       float64
 	parentFontSize float64
 	rootFontSize   float64
+	// lhParent: "lh" units refer to the parent's line height (in
+	// font-size and line-height).
+	lhParent bool
 }
 
 var fontSizeKeywordValues = map[string]float64{
 	"xx-small": 3.0 / 5 * 16, "x-small": 3.0 / 4 * 16, "small": 8.0 / 9 * 16,
 	"medium": 16, "large": 6.0 / 5 * 16, "x-large": 3.0 / 2 * 16,
 	"xx-large": 2 * 16, "xxx-large": 3 * 16,
+}
+
+// root returns the root element's style (the style being computed for
+// the root itself).
+func (ctx *computeCtx) root() *Style {
+	if ctx.r.rootStyle != nil && !(ctx.parent == nil && ctx.pseudo == "") {
+		return ctx.r.rootStyle
+	}
+	return ctx.style
+}
+
+// ratio returns the size of a font-relative unit in ems for a style.
+func (ctx *computeCtx) ratio(s *Style, unit string) float64 {
+	if ctx.r.FontRatio == nil || s == nil {
+		return 0.5
+	}
+	return ctx.r.FontRatio(s, unit)
+}
+
+// lineHeight returns the used line height of a style, for "lh" units.
+func (ctx *computeCtx) lineHeight(s *Style, fontSize float64) float64 {
+	if ctx.r.LineHeight == nil || s == nil || s == ctx.style && s.vals[PLineHeight] == nil {
+		return fontSize * 1.2
+	}
+	return ctx.r.LineHeight(s)
 }
 
 func (ctx *computeCtx) toPx(l Length, fontSize float64) float64 {
@@ -496,24 +535,39 @@ func (ctx *computeCtx) toPx(l Length, fontSize float64) float64 {
 		return l.V * fontSize
 	case "rem":
 		return l.V * ctx.rootFontSize
-	case "ex", "cap":
-		return l.V * fontSize * 0.5
-	case "ch", "ic":
-		return l.V * fontSize * 0.5
-	case "rex", "rch":
-		return l.V * ctx.rootFontSize * 0.5
+	case "ex", "cap", "ch", "ic":
+		return l.V * fontSize * ctx.ratio(ctx.style, l.Unit)
+	case "rex", "rcap", "rch", "ric":
+		return l.V * ctx.rootFontSize * ctx.ratio(ctx.root(), l.Unit[1:])
 	case "lh":
-		return l.V * fontSize * 1.2
+		s := ctx.style
+		if ctx.lhParent {
+			s = ctx.parent
+		}
+		return l.V * ctx.lineHeight(s, fontSize)
 	case "rlh":
-		return l.V * ctx.rootFontSize * 1.2
-	case "vw":
-		return l.V * ctx.r.Viewport[0] / 100
-	case "vh":
-		return l.V * ctx.r.Viewport[1] / 100
+		return l.V * ctx.lineHeight(ctx.root(), ctx.rootFontSize)
+	}
+	// Viewport units: the page area of the first page, or its page box
+	// ("pv*" units).
+	unit := l.Unit
+	vp := ctx.r.Viewport
+	switch {
+	case strings.HasPrefix(unit, "pv"):
+		vp = ctx.r.PageBox
+		unit = unit[1:]
+	case len(unit) > 2 && (unit[0] == 'l' || unit[0] == 's' || unit[0] == 'd') && unit[1] == 'v':
+		unit = unit[1:]
+	}
+	switch unit {
+	case "vw", "vi":
+		return l.V * vp[0] / 100
+	case "vh", "vb":
+		return l.V * vp[1] / 100
 	case "vmin":
-		return l.V * math.Min(ctx.r.Viewport[0], ctx.r.Viewport[1]) / 100
+		return l.V * math.Min(vp[0], vp[1]) / 100
 	case "vmax":
-		return l.V * math.Max(ctx.r.Viewport[0], ctx.r.Viewport[1]) / 100
+		return l.V * math.Max(vp[0], vp[1]) / 100
 	}
 	return l.V
 }
@@ -654,6 +708,12 @@ func (s *Style) ResolveColor(v Value) Color {
 	return s.Color(PColor)
 }
 
+// fontProps are the properties that select and shape the font, computed
+// before the others.
+var fontProps = []PropID{PFontFamily, PFontStyle, PFontWeight, PFontStretch, PLang, PFontLanguageOverride,
+	PFontVariantCaps, PFontVariantLigatures, PFontVariantPosition, PFontVariantNumeric, PFontVariantAlternates,
+	PFontVariantEastAsian, PFontFeatureSettings, PFontVariationSettings, PFontOpticalSizing, PFontKerning}
+
 func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo string) *Style {
 	s := &Style{vals: make([]Value, len(Props)), Pseudo: pseudo, Element: elem}
 	s.IsRoot = parent == nil && pseudo == ""
@@ -766,20 +826,35 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 		return v, true
 	}
 
-	// font-size first.
+	done := make([]bool, len(Props))
+	computeProp := func(id PropID) {
+		v, needCompute := resolve(id)
+		if needCompute {
+			v = ctx.computeValue(id, v, c)
+		}
+		s.vals[id] = v
+		done[id] = true
+	}
+	// direction (for logical properties), the font properties (for the
+	// font-relative units), then font-size and line-height.
+	dv, _ := resolve(PDirection)
+	s.vals[PDirection] = dv
+	for _, id := range fontProps {
+		computeProp(id)
+	}
+	ctx.lhParent = true
 	fsv, needCompute := resolve(PFontSize)
 	if needCompute {
 		s.vals[PFontSize] = Px(ctx.computeFontSize(fsv))
 	} else {
 		s.vals[PFontSize] = fsv
 	}
+	done[PFontSize] = true
+	ctx.lhParent = false
 	ctx.fontSize = s.FontSize()
 	if parent == nil && pseudo == "" {
 		ctx.rootFontSize = ctx.fontSize
 	}
-	// direction (for logical properties).
-	dv, _ := resolve(PDirection)
-	s.vals[PDirection] = dv
 	// color-scheme and color next (for light-dark() and currentcolor).
 	csv, _ := resolve(PColorScheme)
 	s.vals[PColorScheme] = csv
@@ -800,17 +875,15 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 		}
 	}
 	s.vals[PColor] = cv
+	done[PDirection], done[PColorScheme], done[PColor] = true, true, true
+	ctx.lhParent = true
+	computeProp(PLineHeight)
+	ctx.lhParent = false
 
 	for i := range Props {
-		id := PropID(i)
-		if id == PFontSize || id == PColor || id == PColorScheme || id == PDirection {
-			continue
+		if !done[i] {
+			computeProp(PropID(i))
 		}
-		v, needCompute := resolve(id)
-		if needCompute {
-			v = ctx.computeValue(id, v, c)
-		}
-		s.vals[id] = v
 	}
 	ctx.finish(c)
 	return s
