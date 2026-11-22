@@ -264,12 +264,12 @@ func (t *layoutTable) lookup(i int) *lookup {
 	if t.gpos {
 		ext = 9
 	}
+	orig := l.typ
 	for k := 0; k < ns; k++ {
 		so := lo + int(d.u16(lo+6+2*k))
-		if l.typ == ext {
-			typ := d.u16(so + 2)
+		if orig == ext {
 			if k == 0 {
-				l.typ = typ
+				l.typ = d.u16(so + 2)
 			}
 			so += int(d.u32(so + 4))
 		}

@@ -67,8 +67,11 @@ func (s *shaper) applyGPOS(t *layoutTable, l *lookup, m *matcher, so, i int) (in
 			}
 			return 0, false
 		case 2:
-			c1 := d.class(so+int(d.u16(so+8)), g)
 			c2 := d.class(so+int(d.u16(so+10)), g2)
+			if c2 == 0 {
+				return 0, false
+			}
+			c1 := d.class(so+int(d.u16(so+8)), g)
 			n1, n2 := int(d.u16(so+12)), int(d.u16(so+14))
 			if c1 >= n1 || c2 >= n2 {
 				return 0, false

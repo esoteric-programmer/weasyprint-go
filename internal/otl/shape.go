@@ -47,6 +47,8 @@ type Plan struct {
 	kernTable       bool // apply the legacy kern table
 	rtl             bool
 	arabic          bool
+	hebrew          bool
+	hasGPOSMark     bool
 	// ArabicFallback reports that the font has no GSUB joining forms:
 	// the caller substitutes Unicode presentation forms.
 	ArabicFallback bool
@@ -115,7 +117,8 @@ type planFeature struct {
 }
 
 func buildPlan(f *fonts.Font, o Options) (p *Plan) {
-	p = &Plan{font: f, rtl: o.RTL, arabic: o.Arabic, found: map[string]bool{}, varDelta: o.VarDelta}
+	p = &Plan{font: f, rtl: o.RTL, arabic: o.Arabic, found: map[string]bool{}, varDelta: o.VarDelta,
+		hebrew: len(o.Scripts) > 0 && o.Scripts[0] == "hebr"}
 	defer func() {
 		if recover() != nil {
 			p = &Plan{font: f, rtl: o.RTL, arabic: o.Arabic, found: map[string]bool{}, kernTable: true}
@@ -229,6 +232,7 @@ func buildPlan(f *fonts.Font, o Options) (p *Plan) {
 	if p.gpos != nil {
 		if ls := p.gpos.langSys(o.Scripts, langs); ls != 0 {
 			gposKern = p.gpos.hasFeature(ls, "kern")
+			p.hasGPOSMark = p.gpos.hasFeature(ls, "mark")
 		}
 	}
 	p.gposStages = build(p.gpos, o.FeatureVariations[1])
@@ -330,6 +334,7 @@ func (p *Plan) Shape(in Input) (out []Glyph) {
 	f := p.font
 	s := &shaper{Plan: p, size: in.Size, k: in.Size * 1024 / f.UnitsPerEm}
 	s.buf = make([]Glyph, 0, len(in.Runes))
+	continued := false
 	for i, r := range in.Runes {
 		g := Glyph{cp: r, Cluster: in.Offset + i}
 		if in.Masks != nil {
@@ -342,8 +347,16 @@ func (p *Plan) Shape(in Input) (out []Glyph) {
 			g.ID = s.nominal(r)
 		}
 		// Grapheme clusters (HarfBuzz's monotone graphemes level).
-		if i > 0 && (g.unicodeMark || g.zwj || g.zwnj || (r >= 0x1f3fb && r <= 0x1f3ff) ||
-			(r >= 0xff9e && r <= 0xff9f) || (r >= 0xe0020 && r <= 0xe007f)) {
+		cont := g.unicodeMark || g.zwj || (r >= 0x1f3fb && r <= 0x1f3ff) ||
+			(r >= 0xff9e && r <= 0xff9f) || (r >= 0xe0020 && r <= 0xe007f)
+		if i > 0 && isRegionalIndicator(r) && isRegionalIndicator(in.Runes[i-1]) && !continued {
+			cont = true
+		}
+		if i > 0 && in.Runes[i-1] == 0x200d && isPictographic(r) {
+			cont = true
+		}
+		continued = cont && i > 0
+		if continued {
 			g.Cluster = s.buf[len(s.buf)-1].Cluster
 		}
 		s.buf = append(s.buf, g)
@@ -418,6 +431,11 @@ func (p *Plan) Shape(in Input) (out []Glyph) {
 		}
 	}
 	if !hasGPOS && !p.kernTable {
+		for i := range s.buf {
+			if g := &s.buf[i]; g.nonSpacing {
+				g.ccc = recategorize(g.cp, g.ccc)
+			}
+		}
 		s.fallbackMarkPositions()
 	}
 	return s.buf
@@ -445,7 +463,7 @@ func (s *shaper) setUnicodeProps(g *Glyph) {
 	if r >= 0x300 {
 		g.nonSpacing = unicode.Is(unicode.Mn, r)
 		g.unicodeMark = g.nonSpacing || unicode.Is(unicode.Mc, r) || unicode.Is(unicode.Me, r)
-		g.ccc = unorm.CombiningClass(r)
+		g.ccc = modifiedCCC(r, unorm.CombiningClass(r))
 	} else {
 		g.nonSpacing, g.unicodeMark, g.ccc = false, false, 0
 	}
@@ -473,28 +491,23 @@ func (s *shaper) nominal(r rune) uint16 {
 
 // normalize decomposes characters missing from the font, reorders marks
 // and composes characters the font has (HarfBuzz's "composed diacritics"
-// normalization).
+// normalization): characters followed by marks are fully decomposed
+// before recomposition, others only when the font lacks them.
 func (s *shaper) normalize() {
-	need := false
-	for i := range s.buf {
-		g := &s.buf[i]
-		if g.unicodeMark || (g.ID == 0 && !g.ignorable && g.cp > 0x7f) {
-			need = true
-			break
-		}
-	}
-	if !need {
-		return
-	}
 	f := s.font
-	// Decompose.
-	out := make([]Glyph, 0, len(s.buf))
-	for _, g := range s.buf {
-		if g.ID != 0 || g.ignorable || g.cp < 0x80 {
+	in := s.buf
+	n := len(in)
+	out := make([]Glyph, 0, n)
+	emit := func(g Glyph, shortest bool) {
+		if g.ignorable || g.cp < 0x80 {
 			out = append(out, g)
-			continue
+			return
 		}
-		if parts, ok := s.decompose(g.cp); ok {
+		if shortest && g.ID != 0 {
+			out = append(out, g)
+			return
+		}
+		if parts := s.decompose(g.cp, shortest); parts != nil {
 			for _, r := range parts {
 				ng := g
 				ng.cp = r
@@ -502,9 +515,37 @@ func (s *shaper) normalize() {
 				ng.ID = f.GlyphIndex(r)
 				out = append(out, ng)
 			}
-			continue
+			return
 		}
 		out = append(out, g)
+	}
+	allSimple := true
+	for i := 0; i < n; {
+		end := i + 1
+		for end < n && !in[end].unicodeMark {
+			end++
+		}
+		if end < n {
+			end-- // the base of the following marks
+		}
+		for ; i < end; i++ {
+			emit(in[i], true)
+		}
+		if i >= n {
+			break
+		}
+		allSimple = false
+		end = i + 1
+		for end < n && in[end].unicodeMark {
+			end++
+		}
+		for ; i < end; i++ {
+			emit(in[i], false)
+		}
+	}
+	if allSimple {
+		s.buf = out
+		return
 	}
 	// Reorder marks by combining class.
 	for i := 0; i < len(out); i++ {
@@ -523,21 +564,18 @@ func (s *shaper) normalize() {
 	}
 	// Recompose.
 	res := out[:0:0]
-	starter := -1
-	for _, g := range out {
-		if g.unicodeMark && starter >= 0 {
-			prev := res[len(res)-1]
-			if starter == len(res)-1 || prev.ccc < g.ccc {
-				if c, ok := unorm.Compose(res[starter].cp, g.cp); ok {
-					if id := f.GlyphIndex(c); id != 0 {
-						st := &res[starter]
-						st.cp = c
-						st.ID = id
-						cl := st.Cluster
-						s.setUnicodeProps(st)
-						st.Cluster = min(cl, g.Cluster)
-						continue
-					}
+	starter := 0
+	for k, g := range out {
+		if k > 0 && g.unicodeMark && (starter == len(res)-1 || res[len(res)-1].ccc < g.ccc) {
+			if c, ok := s.compose(res[starter].cp, g.cp); ok {
+				if id := f.GlyphIndex(c); id != 0 {
+					st := &res[starter]
+					cl := st.Cluster
+					st.cp = c
+					st.ID = id
+					s.setUnicodeProps(st)
+					st.Cluster = min(cl, g.Cluster)
+					continue
 				}
 			}
 		}
@@ -550,29 +588,33 @@ func (s *shaper) normalize() {
 }
 
 // decompose returns the canonical decomposition of r into characters the
-// font has (HarfBuzz's shortest decomposition).
-func (s *shaper) decompose(r rune) ([]rune, bool) {
+// font has: the shortest one, or the longest one (HarfBuzz's decompose).
+func (s *shaper) decompose(r rune, shortest bool) []rune {
 	a, b, ok := unorm.Decompose(r)
 	if !ok {
-		return nil, false
+		return nil
 	}
 	f := s.font
 	if b != 0 && f.GlyphIndex(b) == 0 {
-		return nil, false
+		return nil
 	}
-	if f.GlyphIndex(a) != 0 {
+	hasA := f.GlyphIndex(a) != 0
+	pair := func(head []rune) []rune {
 		if b != 0 {
-			return []rune{a, b}, true
+			return append(head, b)
 		}
-		return []rune{a}, true
+		return head
 	}
-	if parts, ok := s.decompose(a); ok {
-		if b != 0 {
-			parts = append(parts, b)
-		}
-		return parts, true
+	if shortest && hasA {
+		return pair([]rune{a})
 	}
-	return nil, false
+	if parts := s.decompose(a, shortest); parts != nil {
+		return pair(parts)
+	}
+	if hasA {
+		return pair([]rune{a})
+	}
+	return nil
 }
 
 // applyKernTable applies the legacy kern table: the kerning of a pair is
@@ -792,12 +834,166 @@ func (s *shaper) fractions() {
 		if start == i || end == i+1 {
 			continue
 		}
+		pre, post := uint32(maskNumr|maskFrac), uint32(maskFrac|maskDnom)
+		if s.rtl {
+			pre, post = post, pre
+		}
 		for j := start; j < i; j++ {
-			s.buf[j].mask |= maskNumr
+			s.buf[j].mask |= pre
 		}
 		s.buf[i].mask |= maskFrac
 		for j := i + 1; j < end; j++ {
-			s.buf[j].mask |= maskDnom
+			s.buf[j].mask |= post
 		}
 	}
+}
+
+// modifiedCCC returns HarfBuzz's modified combining class of a character
+// (Hebrew, Arabic, Syriac, Telugu, Thai, Lao and Tibetan classes are
+// renumbered for a better mark order).
+func modifiedCCC(r rune, c uint8) uint8 {
+	switch r {
+	case 0x1a60, 0x0fc6:
+		return 254
+	case 0x0f39:
+		return 127
+	}
+	switch {
+	case c >= 10 && c <= 26:
+		return [...]uint8{22, 15, 16, 17, 23, 18, 19, 20, 21, 14, 24, 12, 25, 13, 10, 11, 26}[c-10]
+	case c >= 27 && c <= 35:
+		return [...]uint8{28, 29, 30, 31, 32, 33, 27, 34, 35}[c-27]
+	}
+	switch c {
+	case 84:
+		return 4
+	case 91:
+		return 5
+	case 103:
+		return 3
+	case 130:
+		return 132
+	case 132:
+		return 131
+	}
+	return c
+}
+
+// recategorize maps modified combining classes to positional classes for
+// fallback mark positioning (HarfBuzz's recategorize_combining_class).
+func recategorize(u rune, c uint8) uint8 {
+	if c >= 200 {
+		return c
+	}
+	if u&^0xff == 0x0e00 {
+		if c == 0 {
+			switch u {
+			case 0x0e31, 0x0e34, 0x0e35, 0x0e36, 0x0e37, 0x0e47, 0x0e4c, 0x0e4d, 0x0e4e:
+				c = cccAboveRight
+			case 0x0eb1, 0x0eb4, 0x0eb5, 0x0eb6, 0x0eb7, 0x0ebb, 0x0ecc, 0x0ecd:
+				c = cccAbove
+			case 0x0ebc:
+				c = cccBelow
+			}
+		} else if u == 0x0e3a {
+			c = cccBelowRight
+		}
+	}
+	switch c {
+	case 22, 15, 16, 17, 23, 18, 19, 20, 21, 24, 25:
+		return cccBelow
+	case 13:
+		return cccAttachedAbove
+	case 10:
+		return cccAboveRight
+	case 11, 14:
+		return cccAboveLeft
+	case 26:
+		return cccAbove
+	case 28, 29, 31, 32, 27, 34, 35, 36:
+		return cccAbove
+	case 30, 33:
+		return cccBelow
+	case 3:
+		return cccBelowRight
+	case 107:
+		return cccAboveRight
+	case 118, 129, 131:
+		return cccBelow
+	case 122, 132:
+		return cccAbove
+	}
+	return c
+}
+
+var dageshForms = [...]rune{0xfb30, 0xfb31, 0xfb32, 0xfb33, 0xfb34, 0xfb35, 0xfb36, 0, 0xfb38, 0xfb39,
+	0xfb3a, 0xfb3b, 0xfb3c, 0, 0xfb3e, 0, 0xfb40, 0xfb41, 0, 0xfb43, 0xfb44, 0, 0xfb46, 0xfb47, 0xfb48,
+	0xfb49, 0xfb4a}
+
+// compose composes two characters, with the Hebrew presentation forms
+// HarfBuzz's Hebrew shaper uses for fonts without mark positioning.
+func (s *shaper) compose(a, b rune) (rune, bool) {
+	if c, ok := unorm.Compose(a, b); ok || !s.hebrew || s.hasGPOSMark {
+		return c, ok
+	}
+	switch b {
+	case 0x05b4:
+		if a == 0x05d9 {
+			return 0xfb1d, true
+		}
+	case 0x05b7:
+		if a == 0x05f2 {
+			return 0xfb1f, true
+		} else if a == 0x05d0 {
+			return 0xfb2e, true
+		}
+	case 0x05b8:
+		if a == 0x05d0 {
+			return 0xfb2f, true
+		}
+	case 0x05b9:
+		if a == 0x05d5 {
+			return 0xfb4b, true
+		}
+	case 0x05bc:
+		if a >= 0x05d0 && a <= 0x05ea {
+			c := dageshForms[a-0x05d0]
+			return c, c != 0
+		} else if a == 0xfb2a {
+			return 0xfb2c, true
+		} else if a == 0xfb2b {
+			return 0xfb2d, true
+		}
+	case 0x05bf:
+		switch a {
+		case 0x05d1:
+			return 0xfb4c, true
+		case 0x05db:
+			return 0xfb4d, true
+		case 0x05e4:
+			return 0xfb4e, true
+		}
+	case 0x05c1:
+		if a == 0x05e9 {
+			return 0xfb2a, true
+		} else if a == 0xfb49 {
+			return 0xfb2c, true
+		}
+	case 0x05c2:
+		if a == 0x05e9 {
+			return 0xfb2b, true
+		} else if a == 0xfb49 {
+			return 0xfb2d, true
+		}
+	}
+	return 0, false
+}
+
+func isRegionalIndicator(r rune) bool { return r >= 0x1f1e6 && r <= 0x1f1ff }
+
+// isPictographic approximates Extended_Pictographic.
+func isPictographic(r rune) bool {
+	return (r >= 0x1f000 && r <= 0x1faff) || (r >= 0x2600 && r <= 0x27bf) || (r >= 0x2300 && r <= 0x23ff) ||
+		(r >= 0x2b00 && r <= 0x2bff) || r == 0x00a9 || r == 0x00ae || r == 0x203c || r == 0x2049 || r == 0x2122 ||
+		(r >= 0x2190 && r <= 0x21ff) || (r >= 0x1fc00 && r <= 0x1fffd)
 }

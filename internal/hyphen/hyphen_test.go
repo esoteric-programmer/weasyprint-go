@@ -59,3 +59,13 @@ func TestTeX(t *testing.T) {
 		t.Error("French should fall back to Pyphen")
 	}
 }
+
+func TestDecomposed(t *testing.T) {
+	d := ForLang("de")
+	if got := d.Hyphenate("Bücherei"); got != "Bü-che-rei" {
+		t.Errorf("decomposed: got %q", got)
+	}
+	if got := d.Hyphenate("Bücherei"); got != "Bü-che-rei" {
+		t.Errorf("composed: got %q", got)
+	}
+}

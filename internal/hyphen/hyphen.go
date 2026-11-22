@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+
+	"github.com/esoteric-programmer/weasyprint-go/internal/unorm"
 )
 
 //go:embed dictionaries/*.dic.gz tex/*.txt.gz
@@ -378,12 +380,29 @@ func (d *Dict) points(word string) []int {
 }
 
 // Positions returns the rune offsets inside word where it can be
-// hyphenated, keeping at least left runes before and right runes after.
+// hyphenated, keeping at least left characters before and right
+// characters after. Words with combining marks are hyphenated in their
+// composed form, the limits counting characters with their marks.
 func (d *Dict) Positions(word string, left, right int) []int {
+	runes := []rune(word)
+	var src []int
+	for _, r := range runes {
+		if r >= 0x300 && (unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r) || unicode.Is(unicode.Me, r)) {
+			var nfc []rune
+			nfc, src = unorm.NFC(runes)
+			word = string(nfc)
+			break
+		}
+	}
 	n := len([]rune(word))
 	var out []int
 	for _, p := range d.points(word) {
 		if p >= left && p <= n-right {
+			if src != nil {
+				// Break before the composed character p, after the
+				// marks of the previous one.
+				p = src[p]
+			}
 			out = append(out, p)
 		}
 	}
