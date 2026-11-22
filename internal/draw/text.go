@@ -3,6 +3,7 @@ package draw
 import (
 	"github.com/esoteric-programmer/weasyprint-go/internal/bidi"
 	"math"
+	"unicode"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/fonts"
@@ -147,6 +148,10 @@ func (cv *canvas) drawText(b *layout.Box, decos []decoration) {
 		}
 	}
 	runes := sh.Runes
+	if b.BlockEllipsis != "" && !b.Spec.RTL {
+		glyphs, advances, runes = cv.blockEllipsize(b, glyphs, advances, hsh != nil)
+		hsh = nil
+	}
 	if cv.ellipsisRight != 0 && b.X+total > cv.ellipsisRight+1e-6 && !b.Spec.RTL {
 		glyphs, advances, runes = cv.ellipsize(b, glyphs, advances, cv.ellipsisRight-b.X)
 	}
@@ -336,6 +341,62 @@ func (r *Renderer) colorGlyph(f *fonts.Font, id uint16) *images.Image {
 	}
 	r.colorGlyphs[k] = im
 	return im
+}
+
+// blockEllipsize appends the block-ellipsis of b, removing words at its end
+// until the text and the ellipsis fit before b.EllipsisRight, like
+// WeasyPrint. A hyphenated last word is removed.
+func (cv *canvas) blockEllipsize(b *layout.Box, glyphs []text.Glyph, advances []float64, hyphenated bool) ([]text.Glyph, []float64, []rune) {
+	rs := b.Shaped.Runes
+	isWord := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r) }
+	lastWordEnd := func(end int) int {
+		for p := end - 1; p > b.Start; p-- {
+			if isWord(rs[p-1]) && !isWord(rs[p]) {
+				return p
+			}
+		}
+		return -1
+	}
+	ell := cv.r.shaper.Shape(b.BlockEllipsis, b.Spec)
+	ew := ell.Pos[len(ell.Runes)]
+	width := b.EllipsisRight - b.X
+	end := b.End
+	if hyphenated {
+		if e := lastWordEnd(end); e >= 0 {
+			end = e
+		}
+	}
+	widthTo := func(end int) float64 {
+		w := 0.0
+		for i, g := range glyphs {
+			if g.End <= end {
+				w += advances[i]
+			}
+		}
+		return w
+	}
+	for widthTo(end)+ew > width+1e-6 {
+		e := lastWordEnd(end)
+		if e < 0 {
+			break
+		}
+		end = e
+	}
+	var out []text.Glyph
+	var outAdv []float64
+	for i, g := range glyphs {
+		if g.End <= end {
+			out = append(out, g)
+			outAdv = append(outAdv, advances[i])
+		}
+	}
+	runes := append(append([]rune{}, rs[:end]...), ell.Runes...)
+	for _, g := range ell.Glyphs {
+		g.Start, g.End = g.Start+end, g.End+end
+		out = append(out, g)
+		outAdv = append(outAdv, g.Advance)
+	}
+	return out, outAdv, runes
 }
 
 // ellipsize cuts the end of the text so that it and a "…" fit in width, like

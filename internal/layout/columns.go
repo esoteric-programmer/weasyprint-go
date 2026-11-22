@@ -16,6 +16,7 @@ func isMulticol(b *Box) bool {
 // columnsLayout lays out a multi-column container (CSS Multi-column 1).
 func (c *Context) columnsLayout(box *Box, bottomSpace float64, skip Skip, cbi cbInfo, pageIsEmpty bool,
 	abs, fixed *absList, adjoining []float64) blockResult {
+	defer c.lineBarrier()()
 	s := box.Style
 	avail := box.W
 	gap := s.FontSize()

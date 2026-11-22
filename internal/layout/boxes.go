@@ -130,6 +130,12 @@ type Box struct {
 	// FirstLetter lists the ::first-letter styles a first-letter box was
 	// built from (outer elements first).
 	FirstLetter []*css.Style
+	// LineRight is the end of the available width of a line box.
+	LineRight float64
+	// BlockEllipsis is the text drawn after a text box ending the last line
+	// kept by max-lines or continue: discard; the box is then cut to fit
+	// before EllipsisRight.
+	BlockEllipsis string
 	// RawText is the text of a text box before text-transform.
 	RawText string
 	// Footnote and float bookkeeping.

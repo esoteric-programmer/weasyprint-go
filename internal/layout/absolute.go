@@ -9,6 +9,7 @@ import (
 // absoluteLayout lays out an absolutely positioned placeholder whose
 // containing block is cb (a positioned box, or a page).
 func (c *Context) absoluteLayout(ph *Box, cb *Box, fixed *absList) {
+	defer c.lineBarrier()()
 	if !ph.IsAbsPlaceholder {
 		return
 	}

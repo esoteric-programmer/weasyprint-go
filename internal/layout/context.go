@@ -46,6 +46,11 @@ type Context struct {
 
 	fn footnotes
 
+	// Line counters of the boxes limited by max-lines, and the last line
+	// laid out.
+	lineLimits []*int
+	lastLine   *Box
+
 	lineCache  map[*Box]*flatLine
 	flClones   map[*Box]*Box
 	strutCache map[*css.Style][2]float64
@@ -241,4 +246,80 @@ func collapseMargins(ms []float64) float64 {
 		}
 	}
 	return pos + neg
+}
+
+// pushLineLimit starts counting lines for a box with max-lines (which only
+// applies with continue: discard) and returns the function restoring the
+// previous counters.
+func (c *Context) pushLineLimit(box *Box) func() {
+	saved := c.lineLimits
+	n, ok := box.Style.Get(css.PMaxLines).(css.Number)
+	if !ok || n < 1 || box.Style.Kw(css.PContinue) != "discard" {
+		return func() { c.lineLimits = saved }
+	}
+	v := int(n)
+	c.lineLimits = append(saved[:len(saved):len(saved)], &v)
+	return func() { c.lineLimits = saved }
+}
+
+// lineBarrier stops the max-lines counters of ancestors from applying to
+// independent layouts (floats, tables, flex items…).
+func (c *Context) lineBarrier() func() {
+	saved := c.lineLimits
+	c.lineLimits = nil
+	return func() { c.lineLimits = saved }
+}
+
+// linesExhausted reports whether a max-lines limit has been reached.
+func (c *Context) linesExhausted() bool {
+	for _, n := range c.lineLimits {
+		if *n <= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// countLine counts a line laid out.
+func (c *Context) countLine(line *Box) {
+	for _, n := range c.lineLimits {
+		*n--
+	}
+	if len(c.lineLimits) > 0 {
+		c.lastLine = line
+	}
+}
+
+// setBlockEllipsis marks the text ending a line to be followed by its
+// block-ellipsis.
+func (c *Context) setBlockEllipsis(line *Box) {
+	if line == nil || line.Kind != KLine {
+		return
+	}
+	var e string
+	switch v := line.Style.Get(css.PBlockEllipsis).(type) {
+	case css.Str:
+		e = string(v)
+	case css.Keyword:
+		if v != "auto" {
+			return
+		}
+		e = "…"
+	default:
+		return
+	}
+	b := line
+	for len(b.Children) > 0 {
+		last := b.Children[len(b.Children)-1]
+		switch last.Kind {
+		case KText:
+			last.BlockEllipsis = e
+			last.EllipsisRight = line.LineRight
+			return
+		case KInline:
+			b = last
+			continue
+		}
+		return
+	}
 }

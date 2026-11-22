@@ -111,6 +111,7 @@ func (c *Context) startPageFootnotes(pt css.PageType, pageStyle *css.Style, page
 // layoutFootnote adds a footnote to the current page and reports whether
 // the footnote area overflows.
 func (c *Context) layoutFootnote(f *Box) bool {
+	defer c.lineBarrier()()
 	c.fn.state[f] = fnCurrent
 	if _, ok := c.fn.claim[f]; !ok {
 		c.fn.claim[f] = c.PageIndex

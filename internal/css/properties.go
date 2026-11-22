@@ -1257,6 +1257,7 @@ var (
 	PBoxDecorationBreak = def("box-decoration-break", false, Keyword("slice"), kw("slice", "clone"))
 	PMaxLines           = def("max-lines", false, Keyword("none"), parseInteger(false, "none"))
 	PContinue           = def("continue", false, Keyword("auto"), kw("auto", "discard"))
+	PBlockEllipsis      = def("block-ellipsis", true, Keyword("none"), parseBlockEllipsis)
 
 	PBorderCollapse = def("border-collapse", true, Keyword("separate"), kw("separate", "collapse"))
 	PBorderSpacing  = def("border-spacing", true, [2]Length{Px(0), Px(0)}, parseBorderSpacing)
@@ -1456,4 +1457,12 @@ func parseFontLanguageOverride(ts []Token, _ *ParseCtx) Value {
 		return Str(t.Value)
 	}
 	return nil
+}
+
+// parseBlockEllipsis parses block-ellipsis: none | auto | <string>.
+func parseBlockEllipsis(ts []Token, ctx *ParseCtx) Value {
+	if t, ok := single(ts); ok && t.Type == TString {
+		return Str(t.Value)
+	}
+	return kw("none", "auto")(ts, ctx)
 }

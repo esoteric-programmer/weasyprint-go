@@ -463,6 +463,22 @@ func init() {
 		}
 		return []PropValue{{PAlignItems, a}, {PJustifyItems, j}}, true
 	})
+	// line-clamp: none | <integer [1,∞]> <'block-ellipsis'>?
+	shorthand("line-clamp", []PropID{PMaxLines, PContinue, PBlockEllipsis}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
+		if len(ts) == 1 && ts[0].Type == TIdent && strings.EqualFold(ts[0].Value, "none") {
+			return []PropValue{{PMaxLines, Keyword("none")}, {PContinue, Keyword("auto")}, {PBlockEllipsis, Keyword("none")}}, true
+		}
+		if len(ts) < 1 || len(ts) > 2 || ts[0].Type != TNumber || !ts[0].IsInt || ts[0].Num < 1 {
+			return nil, false
+		}
+		var e Value = Keyword("auto")
+		if len(ts) == 2 {
+			if e = parseBlockEllipsis(ts[1:], ctx); e == nil {
+				return nil, false
+			}
+		}
+		return []PropValue{{PMaxLines, Number(ts[0].Num)}, {PContinue, Keyword("discard")}, {PBlockEllipsis, e}}, true
+	})
 	shorthand("place-self", []PropID{PAlignSelf, PJustifySelf}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
 		if len(ts) < 1 || len(ts) > 2 {
 			return nil, false

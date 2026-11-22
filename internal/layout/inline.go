@@ -355,6 +355,7 @@ func (it *lineIterator) nextLine() (*Box, Skip, bool) {
 			continue
 		}
 		line = it.buildLine(start, end, x0, textIndent, avail, y, forced, placedFloats)
+		line.LineRight = x0 + avail
 		if st := it.src.Style; st.Kw(css.POverflow) != "visible" && st.Kw(css.PTextOverflow) == "ellipsis" {
 			line.EllipsisRight = x0 + avail
 		}
@@ -1347,6 +1348,7 @@ func (c *Context) inlineBoxVerticality(b *Box, tb *[]*Box, baselineY float64) (f
 
 // layoutAtomic lays out an atomic inline-level box at (0, 0).
 func (c *Context) layoutAtomic(orig *Box, cb *Box, cbi cbInfo) *Box {
+	defer c.lineBarrier()()
 	box := orig.Copy()
 	box.X, box.Y = 0, 0
 	resolvePercentages(box, cbi.W)

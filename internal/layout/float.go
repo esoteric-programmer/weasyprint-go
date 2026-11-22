@@ -103,6 +103,7 @@ func (c *Context) avoidCollisions(box *Box, cbi cbInfo, cb *Box, outer bool) (fl
 
 // floatLayout lays out a floating box and adds it to the exclusions.
 func (c *Context) floatLayout(box *Box, cb *Box, cbi cbInfo, abs, fixed *absList, bottomSpace float64) *Box {
+	defer c.lineBarrier()()
 	resolvePercentages(box, cbi.W)
 	box.ML, box.MR, box.MT, box.MB = nanTo0(box.ML), nanTo0(box.MR), nanTo0(box.MT), nanTo0(box.MB)
 	if clr, ok := c.getClearance(box, 0); ok {

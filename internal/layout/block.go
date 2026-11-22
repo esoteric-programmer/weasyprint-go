@@ -77,6 +77,10 @@ func (c *Context) blockLevelLayout(box *Box, bottomSpace float64, skip Skip, cb 
 		}
 	}
 	switch box.Kind {
+	case KTable, KFlex, KGrid:
+		defer c.lineBarrier()()
+	}
+	switch box.Kind {
 	case KTable:
 		return c.tableLayout(box, bottomSpace, skip, cb, cbi, pageIsEmpty, abs, fixed)
 	case KReplaced:
@@ -395,6 +399,7 @@ func (c *Context) blockContainerLayout(box *Box, bottomSpace float64, skip Skip,
 		box.MT, box.PT, box.BT = 0, 0, 0
 	}
 	discard = discard || box.Style.Kw(css.PContinue) == "discard"
+	defer c.pushLineLimit(box)()
 	drawBottomDecoration := discard || box.Style.Kw(css.PBoxDecorationBreak) == "clone"
 	if drawBottomDecoration {
 		bottomSpace += box.PB + box.BB + box.MB
@@ -467,6 +472,13 @@ func (c *Context) blockContainerLayout(box *Box, bottomSpace float64, skip Skip,
 			childSkip = nil
 		}
 		childSkip = nil
+		if !abort && !stop && c.linesExhausted() {
+			// max-lines reached: drop the following content.
+			if index < len(box.Children)-1 {
+				c.setBlockEllipsis(c.lastLine)
+			}
+			stop = true
+		}
 
 		if abort {
 			c.removePlaceholders(box.Children[startIdx:], abs, fixed)
@@ -492,6 +504,9 @@ func (c *Context) blockContainerLayout(box *Box, bottomSpace float64, skip Skip,
 		resume = nil
 	}
 	fragmented := resume != nil
+	if fragmented && discard && len(newChildren) > 0 && newChildren[len(newChildren)-1].Kind == KLine {
+		c.setBlockEllipsis(newChildren[len(newChildren)-1])
+	}
 	if box.Style.Kw(css.PContinue) == "discard" {
 		resume = nil
 	}
@@ -624,6 +639,12 @@ func (c *Context) lineboxLayout(box *Box, cbi cbInfo, index int, child *Box, new
 		if !ok {
 			break
 		}
+		if c.linesExhausted() {
+			// max-lines reached: drop this line and the following ones.
+			c.removePlaceholders(line.Children, abs, fixed)
+			c.setBlockEllipsis(c.lastLine)
+			break
+		}
 		line.lineResume = rs
 		newY := line.Y + line.H
 		offsetY := 0.0
@@ -697,6 +718,7 @@ func (c *Context) lineboxLayout(box *Box, cbi cbInfo, index int, child *Box, new
 					}
 				}
 				if fits {
+					c.countLine(line)
 					*newChildren = append(*newChildren, line)
 					posY = newY
 					stop = true
@@ -750,6 +772,7 @@ func (c *Context) lineboxLayout(box *Box, cbi cbInfo, index int, child *Box, new
 				break
 			}
 		}
+		c.countLine(line)
 		*newChildren = append(*newChildren, line)
 		posY = newY
 		skip = rs
