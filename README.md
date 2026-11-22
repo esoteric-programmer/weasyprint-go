@@ -269,9 +269,8 @@ codestreams), ICO, CUR, DIB, ICNS, TGA, PBM/PGM/PPM/PFM, PCX, DCX, SGI,
 Sun raster, QOI, XBM, XPM, PSD (composite image), DDS (BC1–BC7,
 uncompressed), BLP, FTEX, FLI/FLC (first frame), PhotoCD, MSP, IM, IMT,
 FITS, SPIDER, GBR, McIdas, PIXAR, XV thumbnails and IPTC; gzip-compressed
-images such as SVGZ files are decompressed. AVIF (which needs an AV1
-decoder) and the formats Pillow only reads with external programs (EPS,
-WMF) are not supported.
+images such as SVGZ files are decompressed. EPS (which Pillow reads with
+Ghostscript) is not supported yet; AVIF and WMF will not be supported.
 
 **Fonts**: system fonts are discovered in the usual directories of Linux,
 macOS and Windows (plus `WEASYPRINT_FONT_PATH`) and matched with the CSS
@@ -294,8 +293,14 @@ here:
   of their fonts are applied like for simple scripts),
   hyphenation that changes letters (Hungarian "asz-szony"; see
   "Hyphenation that changes letters" below).
-* Images: AVIF, EPS and WMF.
-* PDF: the `debug` variant (link annotations on every id).
+* Images: EPS (Pillow reads it with Ghostscript).
+
+Not planned (WeasyPrint supports them, but they will not be implemented):
+
+* Images: AVIF (it needs an AV1 decoder) and WMF (Pillow only reads it
+  with external programs).
+* PDF: the `debug` variant of `--pdf-variant` (link annotations on every
+  id).
 
 `--optimize-images` behaves differently on purpose: WeasyPrint re-encodes
 JPEG images with Pillow's default quality (75, or `--jpeg-quality`), which
