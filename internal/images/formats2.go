@@ -372,6 +372,21 @@ func decodeIM(d []byte) (image.Image, error) {
 		}
 		return data[o : o+stride]
 	}
+	if typ == "CMYK image" {
+		cmyk := image.NewCMYK(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			r := row(y, 4*w)
+			if r == nil {
+				return nil, errCorrupt
+			}
+			for x := 0; x < w; x++ {
+				for k := 0; k < 4; k++ {
+					cmyk.Pix[4*(y*w+x)+k] = r[k*w+x]
+				}
+			}
+		}
+		return cmyk, nil
+	}
 	img := newNRGBA(w, h)
 	set := func(x, y int, r, g, b, a byte) {
 		o := 4 * (y*w + x)
@@ -1085,6 +1100,16 @@ func decodePSD(d []byte) (image.Image, error) {
 	}
 	if bits == 1 {
 		return bilevel(planes[0], w, h, bpr, true)
+	}
+	if mode == 4 {
+		// Inverted CMYK samples, kept in CMYK.
+		cmyk := image.NewCMYK(image.Rect(0, 0, w, h))
+		for i := 0; i < w*h; i++ {
+			for k := 0; k < 4; k++ {
+				cmyk.Pix[4*i+k] = 255 - sample(k, i)
+			}
+		}
+		return cmyk, nil
 	}
 	img := newNRGBA(w, h)
 	for i := 0; i < w*h; i++ {

@@ -410,6 +410,17 @@ func decodeTIFF(r io.Reader) (image.Image, error) {
 		alpha = colorSamples
 		premultiplied = len(t.extra) > 0 && t.extra[0] == 1
 	}
+	if t.photometric == 5 && spp >= 4 && alpha < 0 {
+		// CMYK images stay in CMYK.
+		cmyk := image.NewCMYK(image.Rect(0, 0, w, h))
+		for p := 0; p < w*h; p++ {
+			s := samples[p*spp : (p+1)*spp]
+			for k := 0; k < 4; k++ {
+				cmyk.Pix[4*p+k] = scale(s[k])
+			}
+		}
+		return cmyk, nil
+	}
 	for p := 0; p < w*h; p++ {
 		s := samples[p*spp : (p+1)*spp]
 		var c color.NRGBA

@@ -152,9 +152,13 @@ func TestRareFormats(t *testing.T) {
 		h := md5.New()
 		for i := 0; i < im.Width*im.Height; i++ {
 			var px [4]byte
-			if im.Components == 1 {
+			switch im.Components {
+			case 1:
 				px = [4]byte{im.Pixels[i], im.Pixels[i], im.Pixels[i], 255}
-			} else {
+			case 4:
+				r, g, b := color.CMYKToRGB(im.Pixels[4*i], im.Pixels[4*i+1], im.Pixels[4*i+2], im.Pixels[4*i+3])
+				px = [4]byte{r, g, b, 255}
+			default:
 				px = [4]byte{im.Pixels[3*i], im.Pixels[3*i+1], im.Pixels[3*i+2], 255}
 			}
 			if im.Alpha != nil {
@@ -163,7 +167,7 @@ func TestRareFormats(t *testing.T) {
 			h.Write(px[:])
 		}
 		if got := hex.EncodeToString(h.Sum(nil)); got != c.md5 {
-			t.Errorf("%s: pixels differ", c.file)
+			t.Errorf("%s: pixels differ (%s)", c.file, got)
 		}
 	}
 }

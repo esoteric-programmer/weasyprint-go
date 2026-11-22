@@ -153,6 +153,14 @@ func fromImage(img image.Image, url string) (*Image, error) {
 		return nil, errors.New("empty image")
 	}
 	im := &Image{URL: url, Width: w, Height: h}
+	if c, ok := img.(*image.CMYK); ok {
+		im.Components = 4
+		im.Pixels = make([]byte, 4*w*h)
+		for y := 0; y < h; y++ {
+			copy(im.Pixels[4*w*y:4*w*(y+1)], c.Pix[c.PixOffset(b.Min.X, b.Min.Y+y):])
+		}
+		return im, nil
+	}
 	gray := false
 	switch img.ColorModel() {
 	case color.GrayModel, color.Gray16Model:

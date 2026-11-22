@@ -3,6 +3,7 @@ package draw
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"image/jpeg"
 	"math"
 
@@ -79,17 +80,26 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 	comps, invert := im.Components, im.InvertCMYK
 	quality := r.opts.JPEGQuality
 	if ratio < 1 || (jpegData != nil && quality > 0) {
-		if jpegData != nil {
+		if jpegData != nil && comps == 4 {
+			// Go's JPEG encoder only writes RGB: CMYK images are kept as
+			// they are, or scaled and compressed losslessly.
+			if ratio < 1 {
+				if img, err := jpeg.Decode(bytes.NewReader(jpegData)); err == nil {
+					b := img.Bounds()
+					w := max(1, int(math.Round(float64(b.Dx())*ratio)))
+					h := max(1, int(math.Round(float64(b.Dy())*ratio)))
+					if c, ok := images.Scale(img, w, h).(*image.CMYK); ok {
+						jpegData, pixels, width, height, invert = nil, c.Pix, w, h, false
+					}
+				}
+			}
+		} else if jpegData != nil {
 			if q := quality; q > 0 || ratio < 1 {
 				if q <= 0 {
 					q = 75
 				}
 				if data, w, h, ok := reencodeJPEG(jpegData, ratio, q); ok {
 					jpegData, width, height = data, w, h
-					if comps == 4 {
-						// The JPEG encoder writes CMYK images as RGB.
-						comps, invert = 3, false
-					}
 				}
 			}
 		} else if ratio < 1 {
@@ -149,7 +159,7 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 		data := encode(md, alpha, 1)
 		d["SMask"] = r.doc.Add(&pdf.Stream{Dict: md, Data: data, Compress: true})
 	}
-	data := encode(d, pixels, im.Components)
+	data := encode(d, pixels, comps)
 	return &pdf.Stream{Dict: d, Data: data, Compress: true}
 }
 
