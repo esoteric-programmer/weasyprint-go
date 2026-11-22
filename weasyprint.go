@@ -176,6 +176,10 @@ type Options struct {
 	// Hyphenation selects the hyphenation patterns used by "hyphens:
 	// auto" for German and English.
 	Hyphenation Hyphenation
+	// HyphenationRules are user-defined hyphenation patterns and
+	// exceptions, which replace or extend the built-in ones of their
+	// languages.
+	HyphenationRules []HyphenationRules
 	// PDFOptions are used when writing the document as PDF.
 	PDFOptions
 }
@@ -192,6 +196,55 @@ const (
 	// WeasyPrint.
 	HyphenationPyphen
 )
+
+// HyphenationRules are user-defined hyphenation rules for a language,
+// like LaTeX's \patterns and \hyphenation.
+type HyphenationRules struct {
+	// Lang is the BCP 47 language tag the rules apply to ("de",
+	// "de-CH-1901", "en-GB"…); they also apply to more specific tags.
+	Lang string
+	// Patterns (or the file PatternsFile) replace the built-in patterns
+	// of the language: a TeX file with \patterns{…} (and optionally
+	// \hyphenation{…}), a Hunspell/LibreOffice .dic file, or a plain list
+	// of patterns such as hyph-utf8's .pat.txt files.
+	Patterns     []byte
+	PatternsFile string
+	// Exceptions (or the file ExceptionsFile) are words with their
+	// hyphenation points ("as-so-ciate"; a word without hyphens is never
+	// hyphenated), added to the patterns' exceptions.
+	Exceptions     []byte
+	ExceptionsFile string
+	// Left and Right, if positive, set the minimum numbers of characters
+	// before and after a hyphen used for hyphenate-limit-chars: auto.
+	Left, Right int
+}
+
+// hyphenationRules loads user-defined hyphenation rules.
+func hyphenationRules(hrs []HyphenationRules, src Hyphenation, warn func(string)) (*hyphen.Set, error) {
+	if len(hrs) == 0 {
+		return nil, nil
+	}
+	var rules []hyphen.Rules
+	for _, hr := range hrs {
+		r := hyphen.Rules{Lang: hr.Lang, Patterns: hr.Patterns, Exceptions: hr.Exceptions, Left: hr.Left, Right: hr.Right}
+		if hr.PatternsFile != "" {
+			data, err := os.ReadFile(hr.PatternsFile)
+			if err != nil {
+				return nil, err
+			}
+			r.Patterns = data
+		}
+		if hr.ExceptionsFile != "" {
+			data, err := os.ReadFile(hr.ExceptionsFile)
+			if err != nil {
+				return nil, err
+			}
+			r.Exceptions = data
+		}
+		rules = append(rules, r)
+	}
+	return hyphen.NewSet(rules, hyphen.Source(src), warn)
+}
 
 // PageSize parses a CSS page size such as "A4", "A5 landscape", "letter"
 // or "210mm 297mm" (the values of the @page size descriptor) into CSS px,
@@ -439,6 +492,10 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 
 	resolver.Viewport = defaultSize
 	resolver.ResolveAll()
+	hyphens, err := hyphenationRules(opts.HyphenationRules, opts.Hyphenation, warn)
+	if err != nil {
+		return nil, err
+	}
 	builder := layout.NewBuilder(resolver, imgs, h.BaseURL)
 	builder.Warn = warn
 	root := builder.Build(h.root)
@@ -446,6 +503,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 	ctx.Warn = warn
 	ctx.DefaultPageSize = defaultSize
 	ctx.Hyphenation = hyphen.Source(opts.Hyphenation)
+	ctx.Hyphens = hyphens
 	// Viewport units are relative to the first page size.
 	if w, hh := ctx.FirstPageSize(root); w != resolver.Viewport[0] || hh != resolver.Viewport[1] {
 		resolver.Viewport = [2]float64{w, hh}
@@ -455,6 +513,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 		ctx.Warn = warn
 		ctx.DefaultPageSize = defaultSize
 		ctx.Hyphenation = hyphen.Source(opts.Hyphenation)
+		ctx.Hyphens = hyphens
 	}
 	pages := ctx.LayoutDocument(root)
 	if builder.UsesTargets {
@@ -465,6 +524,7 @@ func (h *HTML) Render(opts *Options) (doc *Document, err error) {
 		ctx.Warn = warn
 		ctx.DefaultPageSize = defaultSize
 		ctx.Hyphenation = hyphen.Source(opts.Hyphenation)
+		ctx.Hyphens = hyphens
 		pages = ctx.LayoutDocument(root)
 	}
 	if os.Getenv("WEASYPRINT_GO_DEBUG") != "" {

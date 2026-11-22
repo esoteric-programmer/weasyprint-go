@@ -219,67 +219,73 @@ func loadDict(file string, hunspell bool) *Dict {
 			d.addException(line)
 			continue
 		}
-		line = parseHex(line)
-		alternative := false
-		if i := strings.Index(line, "/"); i >= 0 && strings.Contains(line, "=") {
-			// Nonstandard hyphenation (e.g. "ck" → "k-k") changes the
-			// letters of the word; these points are not used.
-			line = line[:i]
-			alternative = true
-		}
-		var tags []rune
-		var values []uint8
-		pending := uint8(0)
-		hasPending := false
-		for _, r := range line {
-			if r >= '0' && r <= '9' {
-				pending = uint8(r - '0')
-				hasPending = true
-				continue
-			}
-			if hasPending {
-				values = append(values, pending)
-			} else {
-				values = append(values, 0)
-			}
-			tags = append(tags, r)
-			pending, hasPending = 0, false
+		d.addPattern(line)
+	}
+	return d
+}
+
+// addPattern adds a Liang pattern ("zzug4s").
+func (d *Dict) addPattern(line string) {
+	line = parseHex(line)
+	alternative := false
+	if i := strings.Index(line, "/"); i >= 0 && strings.Contains(line, "=") {
+		// Nonstandard hyphenation (e.g. "ck" → "k-k") changes the
+		// letters of the word; these points are not used.
+		line = line[:i]
+		alternative = true
+	}
+	var tags []rune
+	var values []uint8
+	pending := uint8(0)
+	hasPending := false
+	for _, r := range line {
+		if r >= '0' && r <= '9' {
+			pending = uint8(r - '0')
+			hasPending = true
+			continue
 		}
 		if hasPending {
 			values = append(values, pending)
-			tags = append(tags, 0)
+		} else {
+			values = append(values, 0)
 		}
-		if alternative {
-			for i, v := range values {
-				if v%2 == 1 {
-					values[i] = 0
-				}
+		tags = append(tags, r)
+		pending, hasPending = 0, false
+	}
+	if hasPending {
+		values = append(values, pending)
+		tags = append(tags, 0)
+	}
+	if alternative {
+		for i, v := range values {
+			if v%2 == 1 {
+				values[i] = 0
 			}
-		}
-		maxV := uint8(0)
-		for _, v := range values {
-			if v > maxV {
-				maxV = v
-			}
-		}
-		if maxV == 0 {
-			continue
-		}
-		start, end := 0, len(values)
-		for values[start] == 0 {
-			start++
-		}
-		for values[end-1] == 0 {
-			end--
-		}
-		// The trailing value of a pattern is not attached to a letter.
-		key := string(tagsNoZero(tags))
-		d.patterns[key] = pattern{start, append([]uint8(nil), values[start:end]...)}
-		if n := len([]rune(key)); n > d.maxLen {
-			d.maxLen = n
 		}
 	}
-	return d
+	maxV := uint8(0)
+	for _, v := range values {
+		if v > maxV {
+			maxV = v
+		}
+	}
+	if maxV == 0 {
+		return
+	}
+	start, end := 0, len(values)
+	for values[start] == 0 {
+		start++
+	}
+	for values[end-1] == 0 {
+		end--
+	}
+	// The trailing value of a pattern is not attached to a letter.
+	key := string(tagsNoZero(tags))
+	d.patterns[key] = pattern{start, append([]uint8(nil), values[start:end]...)}
+	if n := len([]rune(key)); n > d.maxLen {
+		d.maxLen = n
+	}
+
 }
 
 // addException adds a word of a TeX exception list ("as-so-ciate"); a

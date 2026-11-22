@@ -73,3 +73,18 @@ func TestTextWrapMode(t *testing.T) {
 		t.Fatalf("nowrap: lines %v", lines)
 	}
 }
+
+func TestHyphenationRules(t *testing.T) {
+	src := `<style>p{width:30px;hyphens:auto;font:16px serif}</style><p lang=de>Silbentrennung</p>`
+	count := func(opts *Options) int {
+		doc, _ := render(t, src, opts)
+		lines, _ := lineWidths(doc)
+		return len(lines[len(lines)-1])
+	}
+	if n := count(nil); n < 2 {
+		t.Fatalf("built-in: %d lines", n)
+	}
+	if n := count(&Options{HyphenationRules: []HyphenationRules{{Lang: "de", Exceptions: []byte("Silbentrennung")}}}); n != 1 {
+		t.Errorf("exception: %d lines", n)
+	}
+}

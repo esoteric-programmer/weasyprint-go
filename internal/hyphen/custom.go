@@ -1,0 +1,310 @@
+package hyphen
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
+
+// User-defined hyphenation rules.
+
+// Rules are user-defined hyphenation rules for a language.
+type Rules struct {
+	// Lang is the BCP 47 language tag the rules apply to ("de",
+	// "de-CH-1901", "en-GB"…); more specific tags win.
+	Lang string
+	// Patterns, if not empty, replace the built-in patterns (and their
+	// exceptions). Accepted formats: TeX files with \patterns{…} (and
+	// \hyphenation{…}), Hunspell/LibreOffice .dic files (first line is the
+	// encoding), and plain pattern lists (hyph-utf8 .pat.txt).
+	Patterns []byte
+	// Exceptions are words with their hyphenation points ("as-so-ciate";
+	// a word without hyphens is never hyphenated), one per line or
+	// separated by spaces, or a TeX \hyphenation{…} list. They are added
+	// to the exceptions of the patterns (and win over them).
+	Exceptions []byte
+	// Left and Right, if positive, are the minimum numbers of characters
+	// before and after a hyphen for hyphenate-limit-chars: auto
+	// (\lefthyphenmin and \righthyphenmin).
+	Left, Right int
+}
+
+// Set holds the user-defined rules of a render, in front of the built-in
+// patterns. The zero value and nil use the built-in patterns only.
+type Set struct {
+	dicts map[string]*Dict // lowercase tag with "-" separators
+}
+
+// NewSet builds a set of rules; parse problems are reported to warn.
+func NewSet(rules []Rules, src Source, warn func(string)) (*Set, error) {
+	s := &Set{dicts: map[string]*Dict{}}
+	for _, r := range rules {
+		tag := normTag(r.Lang)
+		if tag == "" {
+			return nil, errors.New("hyphenation rules without language")
+		}
+		var d *Dict
+		if len(r.Patterns) > 0 {
+			nd, err := ParsePatterns(r.Patterns, warn)
+			if err != nil {
+				return nil, fmt.Errorf("hyphenation patterns for %s: %w", r.Lang, err)
+			}
+			d = nd
+		} else if prev := s.dicts[tag]; prev != nil {
+			d = prev
+		} else if base := Lookup(r.Lang, src); base != nil {
+			d = base.clone()
+		} else {
+			d = newDict()
+			d.Left, d.Right, d.MinWord = 2, 2, 5
+		}
+		if len(r.Exceptions) > 0 {
+			d.exceptions = copyExceptions(d.exceptions)
+			if err := d.AddExceptions(r.Exceptions); err != nil {
+				return nil, fmt.Errorf("hyphenation exceptions for %s: %w", r.Lang, err)
+			}
+		}
+		if r.Left > 0 {
+			d.Left = r.Left
+		}
+		if r.Right > 0 {
+			d.Right = r.Right
+		}
+		if r.Left > 0 || r.Right > 0 {
+			d.MinWord = d.Left + d.Right
+		}
+		s.dicts[tag] = d
+	}
+	return s, nil
+}
+
+func normTag(lang string) string {
+	return strings.Trim(strings.ToLower(strings.ReplaceAll(lang, "_", "-")), "-")
+}
+
+// Lookup returns the dictionary of a language tag: user rules for the
+// tag or a prefix of it, else the built-in patterns.
+func (s *Set) Lookup(lang string, src Source) *Dict {
+	if s != nil && len(s.dicts) > 0 {
+		parts := strings.Split(normTag(lang), "-")
+		for n := len(parts); n > 0; n-- {
+			if d, ok := s.dicts[strings.Join(parts[:n], "-")]; ok {
+				return d
+			}
+		}
+	}
+	return Lookup(lang, src)
+}
+
+func newDict() *Dict {
+	return &Dict{patterns: map[string]pattern{}, cache: map[string][]int{}}
+}
+
+// clone returns a dictionary sharing the patterns of d.
+func (d *Dict) clone() *Dict {
+	return &Dict{Left: d.Left, Right: d.Right, MinWord: d.MinWord, patterns: d.patterns,
+		exceptions: d.exceptions, maxLen: d.maxLen, cache: map[string][]int{}}
+}
+
+func copyExceptions(m map[string][]int) map[string][]int {
+	out := make(map[string][]int, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// ParsePatterns parses hyphenation patterns (TeX, Hunspell or plain).
+func ParsePatterns(data []byte, warn func(string)) (*Dict, error) {
+	d := newDict()
+	d.Left, d.Right = 2, 2
+	text, hunspell, err := decodeRules(data)
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(text, `\patterns`) {
+		pats, ok := texGroup(text, `\patterns`)
+		if !ok {
+			return nil, errors.New(`unterminated \patterns{`)
+		}
+		for _, p := range strings.Fields(pats) {
+			d.addPattern(p)
+		}
+		if exc, ok := texGroup(text, `\hyphenation`); ok {
+			for _, w := range strings.Fields(exc) {
+				d.addException(w)
+			}
+		}
+	} else {
+		lines := strings.Split(text, "\n")
+		if hunspell {
+			lines = lines[1:]
+		}
+		for n, line := range lines {
+			line = strings.TrimSpace(stripComment(line))
+			if line == "" {
+				continue
+			}
+			if hunspell {
+				if v, ok := hunspellMin(line, "LEFTHYPHENMIN"); ok {
+					d.Left = v
+					continue
+				}
+				if v, ok := hunspellMin(line, "RIGHTHYPHENMIN"); ok {
+					d.Right = v
+					continue
+				}
+				if ignored(line) {
+					continue
+				}
+			}
+			for _, p := range strings.Fields(line) {
+				if !validPattern(p) {
+					if warn != nil {
+						warn(fmt.Sprintf("Ignored invalid hyphenation pattern %q on line %d", p, n+1))
+					}
+					continue
+				}
+				d.addPattern(p)
+			}
+		}
+	}
+	if len(d.patterns) == 0 && len(d.exceptions) == 0 {
+		return nil, errors.New("no patterns found")
+	}
+	d.MinWord = d.Left + d.Right
+	return d, nil
+}
+
+// AddExceptions adds hyphenation exceptions to the dictionary.
+func (d *Dict) AddExceptions(data []byte) error {
+	text, _, err := decodeRules(data)
+	if err != nil {
+		return err
+	}
+	if g, ok := texGroup(text, `\hyphenation`); ok {
+		text = g
+	}
+	for _, line := range strings.Split(text, "\n") {
+		for _, w := range strings.Fields(stripComment(line)) {
+			d.addException(w)
+		}
+	}
+	d.mu.Lock()
+	d.cache = map[string][]int{}
+	d.mu.Unlock()
+	return nil
+}
+
+func hunspellMin(line, key string) (int, bool) {
+	if !strings.HasPrefix(line, key) {
+		return 0, false
+	}
+	var v int
+	if _, err := fmt.Sscan(strings.TrimSpace(line[len(key):]), &v); err != nil || v < 1 {
+		return 0, false
+	}
+	return v, true
+}
+
+func validPattern(p string) bool {
+	letters := 0
+	for _, r := range p {
+		switch {
+		case r >= '0' && r <= '9', r == '.':
+		case r == '/' || r == '=' || r == ',':
+			return true // nonstandard Hunspell pattern
+		default:
+			letters++
+		}
+	}
+	return letters > 0
+}
+
+// stripComment removes a TeX/Hunspell comment ("%" or "#" to the end of
+// the line).
+func stripComment(line string) string {
+	for i, r := range line {
+		if (r == '%' || r == '#') && (i == 0 || line[i-1] != '\\') {
+			return line[:i]
+		}
+	}
+	return line
+}
+
+// texGroup returns the content of "\cmd{…}" with comments removed.
+func texGroup(text, cmd string) (string, bool) {
+	i := strings.Index(text, cmd)
+	if i < 0 {
+		return "", false
+	}
+	rest := text[i+len(cmd):]
+	j := strings.Index(rest, "{")
+	if j < 0 {
+		return "", false
+	}
+	rest = rest[j+1:]
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(rest, "\n") {
+		line = stripComment(line)
+		if k := strings.Index(line, "}"); k >= 0 {
+			b.WriteString(line[:k])
+			return b.String(), true
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return "", false
+}
+
+// decodeRules returns the text of a rules file (UTF-8, or the single-byte
+// encoding named on the first line of Hunspell files) and whether it is a
+// Hunspell file.
+func decodeRules(data []byte) (string, bool, error) {
+	if len(data) >= 3 && data[0] == 0xef && data[1] == 0xbb && data[2] == 0xbf {
+		data = data[3:]
+	}
+	first := string(data)
+	if i := strings.IndexByte(first, '\n'); i >= 0 {
+		first = first[:i]
+	}
+	first = strings.TrimSpace(first)
+	enc := strings.ToLower(first)
+	hunspell := false
+	switch {
+	case enc == "utf-8" || enc == "utf8":
+		hunspell = true
+	case strings.HasPrefix(enc, "iso8859-") || strings.HasPrefix(enc, "iso-8859-") ||
+		strings.HasPrefix(enc, "microsoft-cp") || strings.HasPrefix(enc, "cp12") ||
+		strings.HasPrefix(enc, "koi8") || enc == "tis-620":
+		hunspell = true
+		name := enc
+		name = strings.Replace(name, "iso-8859-", "iso8859-", 1)
+		name = strings.Replace(name, "microsoft-", "", 1)
+		if name == "iso8859-1" {
+			var b strings.Builder
+			for _, c := range data {
+				b.WriteRune(rune(c))
+			}
+			return strings.ReplaceAll(b.String(), "\r", ""), true, nil
+		}
+		table, ok := charsets[name]
+		if !ok {
+			return "", false, fmt.Errorf("unsupported encoding %q", first)
+		}
+		var b strings.Builder
+		for _, c := range data {
+			if c < 0x80 {
+				b.WriteByte(c)
+			} else {
+				b.WriteRune(table[c-0x80])
+			}
+		}
+		return strings.ReplaceAll(b.String(), "\r", ""), true, nil
+	}
+	if !utf8.Valid(data) {
+		return "", false, errors.New("not UTF-8")
+	}
+	return strings.ReplaceAll(string(data), "\r", ""), hunspell, nil
+}

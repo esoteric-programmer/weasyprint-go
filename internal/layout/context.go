@@ -32,6 +32,8 @@ type Context struct {
 	DefaultPageSize [2]float64
 	// Hyphenation selects the hyphenation patterns of German and English.
 	Hyphenation hyphen.Source
+	// Hyphens holds user-defined hyphenation rules (nil: none).
+	Hyphens *hyphen.Set
 
 	// Block formatting contexts: stack of excluded shapes (floats).
 	excluded    []*Box

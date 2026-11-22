@@ -470,7 +470,7 @@ func (c *Context) addAutoHyphens(it *flatItem) {
 	if !ok || lang == "" {
 		return
 	}
-	dict := hyphen.Lookup(string(lang), c.Hyphenation)
+	dict := c.Hyphens.Lookup(string(lang), c.Hyphenation)
 	if dict == nil {
 		return
 	}

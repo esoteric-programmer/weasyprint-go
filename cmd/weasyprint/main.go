@@ -89,6 +89,9 @@ func main() {
 	hinting := c.boolean("", "hinting", "keep hinting information in embedded fonts")
 	cache := c.str("c", "cache-folder", "", "store remote resources in a folder to reuse them in later renderings")
 	hyphenation := c.str("", "hyphenation", "tex", "hyphenation patterns for German and English: tex (TeX's, the default)\nor pyphen (the Hunspell patterns used by WeasyPrint)")
+	hyphPatterns := c.multi("", "hyphenation-patterns", "LANG=FILE: hyphenation patterns replacing the built-in ones of a language\n(TeX \\patterns file, Hunspell .dic or pattern list; may be repeated)")
+	hyphExceptions := c.multi("", "hyphenation-exceptions", "LANG=FILE: hyphenation exceptions (\"as-so-ciate\") added for a language\n(may be repeated)")
+	hyphMins := c.multi("", "hyphenation-min", "LANG=LEFT,RIGHT: minimum characters before and after a hyphen\nfor a language (may be repeated)")
 	pageSize := c.str("", "page-size", "", "page size of all pages, overriding the document's CSS\n(\"A4\", \"A5 landscape\", \"letter\", \"210mm 297mm\"...)")
 	// Input.
 	encoding := c.str("e", "encoding", "", "character encoding of the input")
@@ -224,6 +227,39 @@ func main() {
 		opts.Hyphenation = weasyprint.HyphenationPyphen
 	default:
 		fail(2, fmt.Sprintf("invalid --hyphenation %q (choose from tex, pyphen)", *hyphenation))
+	}
+	rule := func(lang string) *weasyprint.HyphenationRules {
+		for i := range opts.HyphenationRules {
+			if strings.EqualFold(opts.HyphenationRules[i].Lang, lang) {
+				return &opts.HyphenationRules[i]
+			}
+		}
+		opts.HyphenationRules = append(opts.HyphenationRules, weasyprint.HyphenationRules{Lang: lang})
+		return &opts.HyphenationRules[len(opts.HyphenationRules)-1]
+	}
+	langValue := func(flag, v string) (string, string) {
+		i := strings.Index(v, "=")
+		if i <= 0 {
+			fail(2, fmt.Sprintf("invalid --%s %q (expected LANG=VALUE)", flag, v))
+		}
+		return v[:i], v[i+1:]
+	}
+	for _, v := range *hyphPatterns {
+		lang, file := langValue("hyphenation-patterns", v)
+		rule(lang).PatternsFile = file
+	}
+	for _, v := range *hyphExceptions {
+		lang, file := langValue("hyphenation-exceptions", v)
+		rule(lang).ExceptionsFile = file
+	}
+	for _, v := range *hyphMins {
+		lang, mins := langValue("hyphenation-min", v)
+		var l, r int
+		if _, err := fmt.Sscanf(mins, "%d,%d", &l, &r); err != nil || l < 1 || r < 1 {
+			fail(2, fmt.Sprintf("invalid --hyphenation-min %q (expected LANG=LEFT,RIGHT)", v))
+		}
+		hr := rule(lang)
+		hr.Left, hr.Right = l, r
 	}
 	// PDF options.
 	po := &opts.PDFOptions
