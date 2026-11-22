@@ -51,7 +51,7 @@ Options (the same as WeasyPrint's CLI, plus `--page-size`):
 | `--xmp-metadata FILE` | XML added to the XMP metadata (repeatable) |
 | `--custom-metadata` | Store other `<meta>` elements in the PDF metadata |
 | `--output-intent INTENT` | `srgb`, `device-cmyk` or the name of an `@color-profile` rule |
-| `--optimize-images` | Accepted (images are always compressed with PNG predictors) |
+| `--optimize-images` | Accepted: other images than JPEG are always compressed losslessly, and JPEG images are kept unchanged (WeasyPrint re-encodes them at quality 75) |
 | `-j`, `--jpeg-quality Q` | Re-encode JPEG images with this quality (0–95) |
 | `-D`, `--dpi DPI` | Maximum resolution of embedded images |
 | `--full-fonts` | Embed whole fonts instead of subsets |
@@ -243,8 +243,13 @@ here:
 * Paged media: `bleed` and crop/cross `marks`.
 * PDF: the `debug` variant (link annotations on every id), colors in
   CMYK and other color spaces (`device-cmyk()`, `color()` with
-  `@color-profile`), and lossless re-compression of JPEG images
-  (`--optimize-images`).
+  `@color-profile`).
+
+`--optimize-images` behaves differently on purpose: WeasyPrint re-encodes
+JPEG images with Pillow's default quality (75, or `--jpeg-quality`), which
+makes them smaller but loses quality despite the option's description.
+Here JPEG images are kept unchanged; other images are always compressed
+losslessly, with or without the option.
 
 Supported here but ignored by WeasyPrint (documents using them render
 differently): media features in `@media` (WeasyPrint only checks media
