@@ -524,3 +524,11 @@ func (c *Content) ShowGlyphs(items []any) {
 	}
 	c.Op("] TJ")
 }
+
+// TextString returns the PDF syntax of a text string (UTF-16BE when not
+// ASCII), for use in content streams.
+func TextString(s string) string {
+	var b bytes.Buffer
+	writeString(&b, s)
+	return b.String()
+}
