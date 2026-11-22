@@ -463,6 +463,12 @@ func init() {
 		}
 		return []PropValue{{PAlignItems, a}, {PJustifyItems, j}}, true
 	})
+	shorthand("border-image", []PropID{PBorderImageSource, PBorderImageSlice, PBorderImageWidth, PBorderImageOutset, PBorderImageRepeat}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
+		return expandBorderImage(ts, ctx, []PropID{PBorderImageSource, PBorderImageSlice, PBorderImageWidth, PBorderImageOutset, PBorderImageRepeat, 0})
+	})
+	shorthand("mask-border", []PropID{PMaskBorderSource, PMaskBorderSlice, PMaskBorderWidth, PMaskBorderOutset, PMaskBorderRepeat, PMaskBorderMode}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
+		return expandBorderImage(ts, ctx, []PropID{PMaskBorderSource, PMaskBorderSlice, PMaskBorderWidth, PMaskBorderOutset, PMaskBorderRepeat, PMaskBorderMode})
+	})
 	// line-clamp: none | <integer [1,∞]> <'block-ellipsis'>?
 	shorthand("line-clamp", []PropID{PMaxLines, PContinue, PBlockEllipsis}, func(ts []Token, ctx *ParseCtx) ([]PropValue, bool) {
 		if len(ts) == 1 && ts[0].Type == TIdent && strings.EqualFold(ts[0].Value, "none") {
@@ -856,4 +862,104 @@ func withLogical(name string, f expandFunc) expandFunc {
 		}
 		return f(ts, ctx)
 	}
+}
+
+// expandBorderImage expands border-image and mask-border:
+// <source> || <slice> [ / <width> | / <width>? / <outset> ]? || <repeat> || <mode>.
+// ids are the source, slice, width, outset, repeat and mode (0 for none)
+// longhands.
+func expandBorderImage(ts []Token, ctx *ParseCtx, ids []PropID) ([]PropValue, bool) {
+	vals := map[PropID]Value{}
+	set := func(id PropID, v Value) bool {
+		if v == nil {
+			return false
+		}
+		if _, dup := vals[id]; dup {
+			return false
+		}
+		vals[id] = v
+		return true
+	}
+	isSlash := func(t Token) bool { return t.Type == TDelim && t.Value == "/" }
+	// take returns the longest prefix of ts accepted by parse.
+	take := func(ts []Token, parse func([]Token, *ParseCtx) Value) (Value, int) {
+		var best Value
+		n := 0
+		for i := 1; i <= len(ts) && i <= 5; i++ {
+			if isSlash(ts[i-1]) {
+				break
+			}
+			if v := parse(ts[:i], ctx); v != nil {
+				best, n = v, i
+			}
+		}
+		return best, n
+	}
+	for len(ts) > 0 {
+		if v := parseBorderImageSource(ts[:1], ctx); v != nil {
+			if !set(ids[0], v) {
+				return nil, false
+			}
+			ts = ts[1:]
+			continue
+		}
+		if ids[5] != 0 {
+			if v := Props[ids[5]].Parse(ts[:1], ctx); v != nil {
+				if !set(ids[5], v) {
+					return nil, false
+				}
+				ts = ts[1:]
+				continue
+			}
+		}
+		if v, n := take(ts, parseBorderImageRepeat); n > 0 {
+			if !set(ids[4], v) {
+				return nil, false
+			}
+			ts = ts[n:]
+			continue
+		}
+		v, n := take(ts, parseBorderImageSlice)
+		if n == 0 || !set(ids[1], v) {
+			return nil, false
+		}
+		ts = ts[n:]
+		if len(ts) == 0 || !isSlash(ts[0]) {
+			continue
+		}
+		ts = ts[1:]
+		if len(ts) == 0 {
+			return nil, false
+		}
+		if v, n := take(ts, parseBorderImageWidth); n > 0 {
+			set(ids[2], v)
+			ts = ts[n:]
+			if len(ts) == 0 || !isSlash(ts[0]) {
+				continue
+			}
+			ts = ts[1:]
+		} else if isSlash(ts[0]) {
+			ts = ts[1:]
+		} else {
+			return nil, false
+		}
+		v, n = take(ts, parseBorderImageOutset)
+		if n == 0 {
+			return nil, false
+		}
+		set(ids[3], v)
+		ts = ts[n:]
+	}
+	var out []PropValue
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		v, ok := vals[id]
+		if !ok {
+			v = Props[id].Initial
+		}
+		out = append(out, PropValue{id, v})
+	}
+	return out, true
 }

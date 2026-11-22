@@ -88,11 +88,17 @@ func (cv *canvas) drawBorders(b *layout.Box) {
 	if b.Style == nil {
 		return
 	}
-	widths := [4]float64{b.BT, b.BR, b.BB, b.BL}
-	if widths == [4]float64{} {
+	if b.Style.Kw(css.PVisibility) != "visible" {
 		return
 	}
-	if b.Style.Kw(css.PVisibility) != "visible" {
+	// A border image replaces the border.
+	if k, ok := b.Style.Get(css.PBorderImageSource).(css.Keyword); !(ok && k == "none") {
+		if cv.drawBorderImage(b, borderImage) {
+			return
+		}
+	}
+	widths := [4]float64{b.BT, b.BR, b.BB, b.BL}
+	if widths == [4]float64{} {
 		return
 	}
 	var sides [4]sideInfo

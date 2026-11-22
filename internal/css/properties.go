@@ -1307,6 +1307,17 @@ var (
 	PFontLanguageOverride = def("font-language-override", true, Keyword("normal"), parseFontLanguageOverride)
 	PColorScheme          = def("color-scheme", true, Keyword("normal"), parseColorScheme)
 	PImageOrientation     = def("image-orientation", false, Keyword("from-image"), parseImageOrientation)
+	PBorderImageSource    = def("border-image-source", false, Keyword("none"), parseBorderImageSource)
+	PBorderImageSlice     = def("border-image-slice", false, defaultBorderImageSlice, parseBorderImageSlice)
+	PBorderImageWidth     = def("border-image-width", false, []Value{Number(1), Number(1), Number(1), Number(1)}, parseBorderImageWidth)
+	PBorderImageOutset    = def("border-image-outset", false, []Value{Number(0), Number(0), Number(0), Number(0)}, parseBorderImageOutset)
+	PBorderImageRepeat    = def("border-image-repeat", false, Repeat{"stretch", "stretch"}, parseBorderImageRepeat)
+	PMaskBorderSource     = def("mask-border-source", false, Keyword("none"), parseBorderImageSource)
+	PMaskBorderSlice      = def("mask-border-slice", false, defaultBorderImageSlice, parseBorderImageSlice)
+	PMaskBorderWidth      = def("mask-border-width", false, []Value{Keyword("auto"), Keyword("auto"), Keyword("auto"), Keyword("auto")}, parseBorderImageWidth)
+	PMaskBorderOutset     = def("mask-border-outset", false, []Value{Number(0), Number(0), Number(0), Number(0)}, parseBorderImageOutset)
+	PMaskBorderRepeat     = def("mask-border-repeat", false, Repeat{"stretch", "stretch"}, parseBorderImageRepeat)
+	PMaskBorderMode       = def("mask-border-mode", false, Keyword("alpha"), kw("alpha", "luminance"))
 	PImageResolution      = def("image-resolution", true, Number(1), func(ts []Token, _ *ParseCtx) Value {
 		if t, ok := single(ts); ok && t.Type == TDimension {
 			switch t.Value {
@@ -1465,4 +1476,126 @@ func parseBlockEllipsis(ts []Token, ctx *ParseCtx) Value {
 		return Str(t.Value)
 	}
 	return kw("none", "auto")(ts, ctx)
+}
+
+// BorderImageSlice is the value of border-image-slice: four numbers or
+// percentages (top, right, bottom, left) and the fill keyword.
+type BorderImageSlice struct {
+	V    [4]Value // Number or percentage Length
+	Fill bool
+}
+
+var defaultBorderImageSlice = BorderImageSlice{V: [4]Value{Percent(100), Percent(100), Percent(100), Percent(100)}}
+
+// fourValues expands 1 to 4 values to top, right, bottom and left.
+func fourValues(vs []Value) []Value {
+	switch len(vs) {
+	case 1:
+		return []Value{vs[0], vs[0], vs[0], vs[0]}
+	case 2:
+		return []Value{vs[0], vs[1], vs[0], vs[1]}
+	case 3:
+		return []Value{vs[0], vs[1], vs[2], vs[1]}
+	case 4:
+		return vs
+	}
+	return nil
+}
+
+func parseBorderImageSource(ts []Token, ctx *ParseCtx) Value {
+	t, ok := single(ts)
+	if !ok {
+		return nil
+	}
+	if v, ok := parseImage(t, ctx); ok {
+		return v
+	}
+	return nil
+}
+
+func parseBorderImageSlice(ts []Token, _ *ParseCtx) Value {
+	var out BorderImageSlice
+	var vs []Value
+	for i, t := range ts {
+		switch {
+		case t.Type == TPercentage && t.Num >= 0:
+			vs = append(vs, Percent(t.Num))
+		case t.Type == TNumber && t.Num >= 0:
+			vs = append(vs, Number(t.Num))
+		case t.IsIdent("fill") && !out.Fill && (i == 0 || i == len(ts)-1):
+			out.Fill = true
+		default:
+			return nil
+		}
+	}
+	f := fourValues(vs)
+	if f == nil {
+		return nil
+	}
+	copy(out.V[:], f)
+	return out
+}
+
+func parseBorderImageWidth(ts []Token, _ *ParseCtx) Value {
+	var vs []Value
+	for _, t := range ts {
+		switch {
+		case t.IsIdent("auto"):
+			vs = append(vs, Keyword("auto"))
+		case t.Type == TNumber && t.Num >= 0:
+			vs = append(vs, Number(t.Num))
+		default:
+			l, ok := parseLengthToken(t, false, true)
+			if !ok {
+				return nil
+			}
+			vs = append(vs, l)
+		}
+	}
+	if f := fourValues(vs); f != nil {
+		return f
+	}
+	return nil
+}
+
+func parseBorderImageOutset(ts []Token, _ *ParseCtx) Value {
+	var vs []Value
+	for _, t := range ts {
+		switch {
+		case t.Type == TNumber && t.Num >= 0:
+			vs = append(vs, Number(t.Num))
+		default:
+			l, ok := parseLengthToken(t, false, false)
+			if !ok {
+				return nil
+			}
+			vs = append(vs, l)
+		}
+	}
+	if f := fourValues(vs); f != nil {
+		return f
+	}
+	return nil
+}
+
+func parseBorderImageRepeat(ts []Token, _ *ParseCtx) Value {
+	if len(ts) < 1 || len(ts) > 2 {
+		return nil
+	}
+	var r Repeat
+	for i, t := range ts {
+		if t.Type != TIdent {
+			return nil
+		}
+		switch k := strings.ToLower(t.Value); k {
+		case "stretch", "repeat", "round", "space":
+			r[i] = k
+		default:
+			return nil
+		}
+	}
+	if len(ts) == 1 {
+		r[1] = r[0]
+	}
+	return r
 }

@@ -178,3 +178,35 @@ func TestColor4(t *testing.T) {
 		t.Errorf("light-dark() in normal scheme: %v", c)
 	}
 }
+
+func TestBorderImageShorthand(t *testing.T) {
+	get := func(decl string) map[PropID]Value {
+		out := map[PropID]Value{}
+		for _, pv := range ExpandDeclaration("border-image", Tokenize(decl), &ParseCtx{}) {
+			out[pv.ID] = pv.Value
+		}
+		return out
+	}
+	v := get(`url(a.png) 30% 20 fill / 2 / 4px round space`)
+	if len(v) != 5 {
+		t.Fatalf("got %d longhands", len(v))
+	}
+	if s := v[PBorderImageSlice].(BorderImageSlice); !s.Fill || s.V[1] != Number(20) || s.V[0] != Percent(30) {
+		t.Errorf("slice %v", s)
+	}
+	if w := v[PBorderImageWidth].([]Value); w[3] != Number(2) {
+		t.Errorf("width %v", w)
+	}
+	if o := v[PBorderImageOutset].([]Value); o[0] != Px(4) {
+		t.Errorf("outset %v", o)
+	}
+	if r := v[PBorderImageRepeat].(Repeat); r != (Repeat{"round", "space"}) {
+		t.Errorf("repeat %v", r)
+	}
+	if len(get(`url(a.png) 30 /`)) != 0 || len(get(`10 10 10 10 10`)) != 0 {
+		t.Error("invalid values accepted")
+	}
+	if v := get(`linear-gradient(red, blue) 10`); v[PBorderImageWidth] == nil {
+		t.Error("missing longhand reset")
+	}
+}

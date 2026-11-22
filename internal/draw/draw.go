@@ -701,7 +701,7 @@ func createsStackingContext(b *layout.Box) bool {
 	if b.Style == nil || b.Kind == layout.KText || b.Kind == layout.KLine {
 		return false
 	}
-	if b.Style.Opacity() < 1 || b.Style.Transforms() != nil {
+	if b.Style.Opacity() < 1 || b.Style.Transforms() != nil || hasMaskBorder(b) {
 		return true
 	}
 	pos := b.Style.Kw(css.PPosition)
@@ -769,7 +769,14 @@ func (cv *canvas) paintUnit(b *layout.Box) {
 		cv.c.Save()
 		cv.c.Transform(tr[0], tr[1], tr[2], tr[3], tr[4], tr[5])
 	}
-	cv.paintLayers(b, false)
+	if mask := cv.maskBorderState(b); mask != "" {
+		cv.c.Save()
+		cv.c.SetState(mask)
+		cv.paintLayers(b, false)
+		cv.c.Restore()
+	} else {
+		cv.paintLayers(b, false)
+	}
 	if tr != nil {
 		cv.c.Restore()
 	}
