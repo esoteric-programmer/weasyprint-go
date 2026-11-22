@@ -290,6 +290,10 @@ reproduced:
   inverted; negative BC6H values become white. JPEG 2000 images decoded
   with the 9/7 wavelet can differ from OpenJPEG by one level on a few
   pixels (rounding).
+* With `word-break: break-all`, lines can start with closing
+  punctuation ("foo (buzz)" / ", bar"), which CSS forbids; with
+  `overflow-wrap: anywhere` or `break-word`, the emergency break avoids
+  such positions here when the word can break elsewhere.
 * Glyph widths are written rounded and the correction is truncated, so
   glyphs drift from their laid-out positions (up to 0.5/1000 em each).
 * Tab stops are 2.4% too wide (`tab-size: 100px` gives 102.4px).

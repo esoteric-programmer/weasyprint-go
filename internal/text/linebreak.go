@@ -199,7 +199,11 @@ func Breaks(runes []rune, opt BreakOptions) []Break {
 		default:
 			b = BreakNone
 		}
-		if b == BreakNone && opt.Anywhere && before != clSP && after != clSP && after != clCM {
+		// Breaks anywhere, except before closing punctuation and after
+		// opening punctuation, which would start a line with ")" or ","
+		// (overflow-wrap still breaks there when nothing else fits).
+		if b == BreakNone && opt.Anywhere && before != clSP && after != clSP && after != clCM &&
+			after != clCL && after != clEX && after != clIS && after != clNS && before != clOP {
 			b = BreakAllowed
 		}
 		out[i] = b

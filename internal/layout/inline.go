@@ -3,6 +3,7 @@ package layout
 import (
 	"math"
 	"strings"
+	"unicode"
 
 	"github.com/esoteric-programmer/weasyprint-go/internal/css"
 	"github.com/esoteric-programmer/weasyprint-go/internal/hyphen"
@@ -607,7 +608,17 @@ func (it *lineIterator) breakLine(start linePos, x, maxX, y float64, placed map[
 						return last.pos, false, waiting, false
 					}
 					if breakWord {
-						return linePos{p.item, i}, false, waiting, false
+						// Avoid starting the next line with closing
+						// punctuation or ending this one with opening
+						// punctuation, when the word can break earlier.
+						j := i
+						for j > p.r+1 && badLineStart(runes, j) {
+							j--
+						}
+						if badLineStart(runes, j) {
+							j = i
+						}
+						return linePos{p.item, j}, false, waiting, false
 					}
 				}
 				if r == '\n' && item.ws != "normal" && item.ws != "nowrap" {
@@ -1464,4 +1475,17 @@ func TabWidths(b *Box) []float64 {
 // borders, padding and margins (box-decoration-break: clone).
 func clonesDecoration(b *Box) bool {
 	return b.Style != nil && b.Style.Kw(css.PBoxDecorationBreak) == "clone"
+}
+
+// badLineStart reports whether breaking before runes[i] would start a line
+// with closing punctuation or end one with opening punctuation.
+func badLineStart(runes []rune, i int) bool {
+	if i <= 0 || i >= len(runes) {
+		return false
+	}
+	r, prev := runes[i], runes[i-1]
+	if unicode.In(r, unicode.Pe, unicode.Pf) || strings.ContainsRune(",.;:!?\u2026", r) {
+		return true
+	}
+	return unicode.In(prev, unicode.Ps, unicode.Pi)
 }
