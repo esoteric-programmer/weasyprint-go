@@ -47,6 +47,7 @@ type Context struct {
 	fn footnotes
 
 	lineCache  map[*Box]*flatLine
+	flClones   map[*Box]*Box
 	strutCache map[*css.Style][2]float64
 	tableCache map[*Box]*tableInfo
 }
@@ -61,7 +62,7 @@ func NewContext(shaper *text.Shaper, r *css.Resolver, imgs *images.Cache, b *Bui
 	return &Context{
 		Shaper: shaper, R: r, Images: imgs, Builder: b,
 		Running: map[string][]*runningEntry{}, StringSets: map[string][]string{},
-		LastStringSets: map[string]string{}, lineCache: map[*Box]*flatLine{},
+		LastStringSets: map[string]string{}, lineCache: map[*Box]*flatLine{}, flClones: map[*Box]*Box{},
 		strutCache: map[*css.Style][2]float64{}, tableCache: map[*Box]*tableInfo{},
 	}
 }

@@ -37,6 +37,7 @@ type Resolver struct {
 	index     ruleIndex
 	styles    map[*html.Node]*Style
 	pseudos   map[pseudoKey]*Style
+	cascades  map[pseudoKey]*cascaded
 	rootStyle *Style
 	pageCache map[string]*Style
 }
@@ -55,6 +56,7 @@ func NewResolver(doc *html.Node, sheets []*Stylesheet, baseURL string) *Resolver
 		Doc:           doc,
 		styles:        map[*html.Node]*Style{},
 		pseudos:       map[pseudoKey]*Style{},
+		cascades:      map[pseudoKey]*cascaded{},
 		pageCache:     map[string]*Style{},
 		Viewport:      [2]float64{793.7007874, 1122.519685},
 	}
@@ -215,6 +217,7 @@ func (r *Resolver) ResolveAll() {
 		}
 		c := newCascaded()
 		c.apply(entries)
+		r.cascades[pseudoKey{e, ""}] = c
 		st := r.compute(c, parent, e, "")
 		r.styles[e] = st
 		if parent == nil {
@@ -229,6 +232,7 @@ func (r *Resolver) ResolveAll() {
 			}
 			pc := newCascaded()
 			pc.apply(pe)
+			r.cascades[pseudoKey{e, pseudo}] = pc
 			r.pseudos[pseudoKey{e, pseudo}] = r.compute(pc, st, e, pseudo)
 		}
 		for ch := e.FirstChild; ch != nil; ch = ch.NextSibling {
@@ -250,6 +254,17 @@ func (r *Resolver) RootStyle() *Style { return r.rootStyle }
 // rule targets it.
 func (r *Resolver) PseudoStyle(e *html.Node, pseudo string) *Style {
 	return r.pseudos[pseudoKey{e, pseudo}]
+}
+
+// Restyle recomputes the style of an element (or of one of its
+// pseudo-elements) as if its parent style were parent. It is used for
+// content inheriting from a ::first-line pseudo-element.
+func (r *Resolver) Restyle(e *html.Node, pseudo string, parent *Style) *Style {
+	c := r.cascades[pseudoKey{e, pseudo}]
+	if c == nil {
+		c = newCascaded()
+	}
+	return r.compute(c, parent, e, pseudo)
 }
 
 // MarkerStyle returns the ::marker style, computing a default one if needed.
@@ -684,8 +699,16 @@ func (r *Resolver) compute(c *cascaded, parent *Style, elem *html.Node, pseudo s
 		return v
 	}
 
+	track := pseudo == "first-line" || pseudo == "first-letter"
 	resolve := func(id PropID) (Value, bool) {
 		v := specified(id)
+		if track {
+			defer func() {
+				if v != nil {
+					s.Declared = append(s.Declared, id)
+				}
+			}()
+		}
 		// A logical property declared later replaces the physical one.
 		if m, ok := physicalLogical[id]; ok {
 			l := m[0]

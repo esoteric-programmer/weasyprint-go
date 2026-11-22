@@ -290,6 +290,35 @@ func isCollapsibleSpace(it *flatItem, r rune) bool {
 }
 
 func (it *lineIterator) next() (*Box, Skip, bool) {
+	if it.done || !it.first || it.src.FirstLine == nil {
+		return it.nextLine()
+	}
+	// The first line is laid out from a copy of the line box restyled by
+	// ::first-line, whose content is wrapped in an extra inline box: its
+	// positions are shifted by one item.
+	fl, src, atomics := it.fl, it.src, it.atomics
+	clone := it.c.firstLineClone(src)
+	it.fl, it.src, it.atomics = it.c.flatten(clone), clone, map[int]*Box{}
+	line, skip, ok := it.nextLine()
+	pos, done := it.pos, it.done
+	it.fl, it.src, it.atomics = fl, src, atomics
+	if !ok || done || skip == nil {
+		it.done = true
+		return line, nil, ok
+	}
+	p := linePos{pos.item - 1, pos.r}
+	if p.item < 0 {
+		p = linePos{}
+	}
+	if p.item >= len(fl.items) || it.restIsEmpty(p) {
+		it.done = true
+		return line, nil, true
+	}
+	it.pos = p
+	return line, Skip{encodePos(p): nil}, true
+}
+
+func (it *lineIterator) nextLine() (*Box, Skip, bool) {
 	if it.done {
 		return nil, nil, false
 	}
@@ -796,9 +825,7 @@ func (it *lineIterator) buildLine(start, end linePos, x0, textIndent, avail, y f
 	}
 	if offset != 0 {
 		for _, ch := range line.Children {
-			if !ch.IsFloated() {
-				ch.Translate(offset, 0)
-			}
+			translateInFlow(ch, offset, 0)
 		}
 	}
 	line.W = width
@@ -1186,10 +1213,24 @@ func (c *Context) lineVerticality(line *Box) {
 	line.H = maxY - minY
 	line.MT, line.MB = 0, 0
 	for _, ch := range line.Children {
-		if ch.IsFloated() {
-			continue
-		}
-		ch.Translate(0, offsetY)
+		translateInFlow(ch, 0, offsetY)
+	}
+}
+
+// translateInFlow moves an inline-level box and its content, except the
+// floats it contains, which are already placed.
+func translateInFlow(b *Box, dx, dy float64) {
+	if b.IsFloated() {
+		return
+	}
+	if b.Kind != KInline {
+		b.Translate(dx, dy)
+		return
+	}
+	b.X += dx
+	b.Y += dy
+	for _, ch := range b.Children {
+		translateInFlow(ch, dx, dy)
 	}
 }
 
@@ -1204,7 +1245,7 @@ func translateSubtree(b *Box, dy float64) {
 		}
 		return
 	}
-	b.Translate(0, dy)
+	translateInFlow(b, 0, dy)
 }
 
 func (c *Context) alignedSubtreeVerticality(b *Box, tb *[]*Box, baselineY float64) (float64, float64, bool) {

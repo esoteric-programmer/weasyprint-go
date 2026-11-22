@@ -59,6 +59,7 @@ func (b *Builder) Build(doc *html.Node) *Box {
 		r = &Box{Kind: KBlock, Style: r.Style, Element: root, Children: boxes}
 	}
 	fixupBlockContainer(b, r)
+	b.firstPseudos(r, nil, nil)
 	return r
 }
 
@@ -716,8 +717,12 @@ func (b *Builder) textBoxes(s string, style *css.Style) []*Box {
 	if s == "" {
 		return nil
 	}
+	raw := s
 	s = transformText(s, style.Kw(css.PTextTransform))
-	return []*Box{{Kind: KText, Style: style, Text: s, Anonymous: true}}
+	if s == raw {
+		raw = ""
+	}
+	return []*Box{{Kind: KText, Style: style, Text: s, RawText: raw, Anonymous: true}}
 }
 
 func isCollapsible(ws string) bool {

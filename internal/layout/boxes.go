@@ -124,6 +124,14 @@ type Box struct {
 	// EllipsisRight is the end of the available width of a line box whose
 	// overflowing text ends with an ellipsis (text-overflow: ellipsis), or 0.
 	EllipsisRight float64
+	// FirstLine lists the ::first-line styles applying to the first line of
+	// a line box (outer elements first).
+	FirstLine []*css.Style
+	// FirstLetter lists the ::first-letter styles a first-letter box was
+	// built from (outer elements first).
+	FirstLetter []*css.Style
+	// RawText is the text of a text box before text-transform.
+	RawText string
 	// Footnote and float bookkeeping.
 	IsFloatPlaceholder bool
 	// Footnote called by a ::footnote-call box.

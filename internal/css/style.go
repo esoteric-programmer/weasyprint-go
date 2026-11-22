@@ -12,6 +12,9 @@ type Style struct {
 	Element *html.Node
 	// IsRoot is true for the root element style.
 	IsRoot bool
+	// Declared lists the properties set by the cascade, for ::first-line
+	// and ::first-letter styles.
+	Declared []PropID
 }
 
 // LinkValue is the computed value of the link property.
