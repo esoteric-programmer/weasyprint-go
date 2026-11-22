@@ -505,10 +505,6 @@ func loadFontFaces(lib *fonts.Library, faces []*css.FontFaceRule, f fetch.Fetche
 				}
 				continue
 			}
-			if src.Format == "woff2" || strings.HasSuffix(strings.ToLower(strings.SplitN(src.URL, "?", 2)[0]), ".woff2") {
-				// WOFF2 needs Brotli decompression, which is not available.
-				continue
-			}
 			res, err := f(src.URL)
 			if err != nil {
 				warn("Failed to load font at " + src.URL + ": " + err.Error())

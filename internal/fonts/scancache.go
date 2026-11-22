@@ -72,7 +72,7 @@ func cachedScan(dirs []string, index func(path string) []*FaceInfo) []*FaceInfo 
 				}
 				seen[real] = true
 				switch strings.ToLower(filepath.Ext(path)) {
-				case ".ttf", ".otf", ".ttc", ".otc", ".woff":
+				case ".ttf", ".otf", ".ttc", ".otc", ".woff", ".woff2":
 					for _, fi := range index(real) {
 						res.faces = append(res.faces, *fi)
 					}

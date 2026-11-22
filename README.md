@@ -231,7 +231,8 @@ substitutes, `<dir>` font directories), and per-character fallback
 follows the same order, by script and language; elsewhere a built-in
 table is used. Color emoji fonts (CBDT/PNG, like Noto Color Emoji) are
 drawn as images. As in WeasyPrint, bold and italic are not synthesized.
-`@font-face` supports TTF, OTF, TTC and WOFF sources and `local()`.
+`@font-face` supports TTF, OTF, TTC, WOFF and WOFF2 (including
+collections) sources and `local()`.
 
 ## Differences from WeasyPrint and limitations
 
@@ -244,7 +245,7 @@ here:
   `font-variant-numeric`/`-position`/`-ligatures`/`-east-asian`/
   `-alternates`, contextual alternates, mark positioning),
   `font-variation-settings` (variable fonts use their default instance),
-  WOFF2 fonts (they require Brotli), nonstandard hyphenation patterns
+  nonstandard hyphenation patterns
   that change letters (such as the old German "ck" → "k-k").
 * Images: the rarer formats of Pillow (ICO, PPM, PCX, TGA, JPEG 2000…).
 * PDF: the `debug` variant (link annotations on every id).
@@ -365,4 +366,6 @@ them (mostly LGPL/MPL/GPL tri-licenses). The VP8 and VP8L decoders in
 `internal/images/vp8` and `internal/images/vp8l` come from
 golang.org/x/image (BSD 3-Clause, The Go Authors), and the sRGB profile
 in `internal/draw` is the International Color Consortium's
-`sRGB2014.icc`, freely redistributable.
+`sRGB2014.icc`, freely redistributable. The Brotli static dictionary and
+tables in `internal/brotli` come from the Brotli reference implementation
+(MIT, see `internal/brotli/LICENSE`).

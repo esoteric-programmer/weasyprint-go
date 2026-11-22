@@ -173,17 +173,25 @@ func indexFile(path string) (faces []*FaceInfo) {
 	if len(head) < 12 {
 		return
 	}
-	if string(head[:4]) == "wOFF" {
+	if string(head[:4]) == "wOFF" || string(head[:4]) == "wOF2" {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return
 		}
-		font, err := Parse(data, 0)
-		if err != nil {
-			return
+		n := 1
+		if string(head[:4]) == "wOF2" && string(head[4:8]) == "ttcf" {
+			if sfnt, err := decodeWOFF2(data); err == nil && len(sfnt) >= 12 {
+				n = min(int(u32(sfnt, 8)), 64)
+			}
 		}
-		if fi := newFaceInfo(path, 0, font); fi != nil {
-			faces = append(faces, fi)
+		for i := 0; i < n; i++ {
+			font, err := Parse(data, i)
+			if err != nil {
+				return
+			}
+			if fi := newFaceInfo(path, i, font); fi != nil {
+				faces = append(faces, fi)
+			}
 		}
 		return
 	}

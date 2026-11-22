@@ -98,7 +98,11 @@ func Parse(data []byte, index int) (*Font, error) {
 		}
 		data = d
 	case "wOF2":
-		return nil, fmt.Errorf("WOFF2 fonts are not supported")
+		d, err := decodeWOFF2(data)
+		if err != nil {
+			return nil, err
+		}
+		data = d
 	}
 	off := 0
 	if string(data[:4]) == "ttcf" {

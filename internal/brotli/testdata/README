@@ -1,0 +1,3 @@
+Files compressed with the reference Brotli encoder (Python brotli 1.2.1):
+text_q11_w22.br is Brotli quality 11, window 22; rep_q5_w16.br quality 5,
+window 16. The decoder output must equal the files without .br.
