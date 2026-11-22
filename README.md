@@ -222,6 +222,14 @@ supports), `use`/`symbol`, nested `svg`, clip paths, transforms, `<style>`,
 `text-anchor`), with
 `object-fit`/`object-position`, `image-resolution` and
 `image-orientation` (EXIF orientation of JPEG, PNG and WebP images).
+The rarer formats read by Pillow are decoded too: JPEG 2000 (JP2 and
+codestreams), ICO, CUR, DIB, ICNS, TGA, PBM/PGM/PPM/PFM, PCX, DCX, SGI,
+Sun raster, QOI, XBM, XPM, PSD (composite image), DDS (BC1–BC7,
+uncompressed), BLP, FTEX, FLI/FLC (first frame), PhotoCD, MSP, IM, IMT,
+FITS, SPIDER, GBR, McIdas, PIXAR, XV thumbnails and IPTC; gzip-compressed
+images such as SVGZ files are decompressed. AVIF (which needs an AV1
+decoder) and the formats Pillow only reads with external programs (EPS,
+WMF) are not supported.
 
 **Fonts**: system fonts are discovered in the usual directories of Linux,
 macOS and Windows (plus `WEASYPRINT_FONT_PATH`) and matched with the CSS
@@ -247,7 +255,7 @@ here:
   `font-variation-settings` (variable fonts use their default instance),
   nonstandard hyphenation patterns
   that change letters (such as the old German "ck" → "k-k").
-* Images: the rarer formats of Pillow (ICO, PPM, PCX, TGA, JPEG 2000…).
+* Images: AVIF, EPS and WMF.
 * PDF: the `debug` variant (link annotations on every id).
 
 `--optimize-images` behaves differently on purpose: WeasyPrint re-encodes
@@ -264,13 +272,24 @@ widths, `overflow: clip`, `word-break: keep-all`,
 `white-space: break-spaces`, `unicode-bidi`, `place-items`/
 `place-content`, grid templates with named areas, the `:required`,
 `:optional`, `:read-only`, `:read-write`, `:placeholder-shown`,
-`:default` and `:indeterminate` selectors, and the `--page-size`
-option.
+`:default` and `:indeterminate` selectors, the `--page-size`
+option, gzip-compressed (SVGZ) images, and WOFF2 font collections.
 
 The output was compared with WeasyPrint 70 page by page. The remaining
 differences come from WeasyPrint bugs that are intentionally not
 reproduced:
 
+* Images, where Pillow decodes differently: 16-bit gray PNM, FITS and
+  McIdas samples are clipped (most images turn white) instead of scaled;
+  floating point images (PFM, FITS, SPIDER) cannot be embedded; Lab PSD
+  files are not converted to RGB; the transparency masks of 24-bit
+  cursors are ignored; XBM bitmaps are inverted (set bits are the black
+  foreground); XPM files with transparent colors fail; icons with
+  several images of the largest size use the one with fewest colors;
+  16-bit TGA colors are not fully expanded and their attribute bit is
+  inverted; negative BC6H values become white. JPEG 2000 images decoded
+  with the 9/7 wavelet can differ from OpenJPEG by one level on a few
+  pixels (rounding).
 * Glyph widths are written rounded and the correction is truncated, so
   glyphs drift from their laid-out positions (up to 0.5/1000 em each).
 * Tab stops are 2.4% too wide (`tab-size: 100px` gives 102.4px).
@@ -368,4 +387,6 @@ golang.org/x/image (BSD 3-Clause, The Go Authors), and the sRGB profile
 in `internal/draw` is the International Color Consortium's
 `sRGB2014.icc`, freely redistributable. The Brotli static dictionary and
 tables in `internal/brotli` come from the Brotli reference implementation
-(MIT, see `internal/brotli/LICENSE`).
+(MIT, see `internal/brotli/LICENSE`); the BC6H/BC7 partition and bit
+layout tables in `internal/images/bc_tables.go` come from Pillow
+(MIT-CMU license).
