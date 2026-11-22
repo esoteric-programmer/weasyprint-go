@@ -7,3 +7,4 @@ Comparison of the image decoders with Pillow:
 Expected differences (Pillow bugs): a.cur (mask ignored), a.xbm (inverted),
 a.xpm (Pillow fails), bc6hs.dds (negative values), lab.psd (no Lab
 conversion), rgb16.tga (5-bit expansion, alpha bit), a.pcd (rounding).
+JPEG 2000 (irrl.jp2, big.jp2): a few pixels off by one (9/7 float rounding).
