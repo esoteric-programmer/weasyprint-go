@@ -269,8 +269,27 @@ codestreams), ICO, CUR, DIB, ICNS, TGA, PBM/PGM/PPM/PFM, PCX, DCX, SGI,
 Sun raster, QOI, XBM, XPM, PSD (composite image), DDS (BC1–BC7,
 uncompressed), BLP, FTEX, FLI/FLC (first frame), PhotoCD, MSP, IM, IMT,
 FITS, SPIDER, GBR, McIdas, PIXAR, XV thumbnails and IPTC; gzip-compressed
-images such as SVGZ files are decompressed. EPS (which Pillow reads with
-Ghostscript) is not supported yet; AVIF and WMF will not be supported.
+images such as SVGZ files are decompressed. AVIF and WMF will not be
+supported.
+
+**EPS images** (and other PostScript files with a `%%BoundingBox`, also
+with a DOS EPS header) are run by a built-in PostScript interpreter
+(`internal/ps`, LanguageLevel 3) and embedded as vector graphics: paths,
+clipping, all color spaces (Indexed, Separation and DeviceN through their
+tint transforms, CIE and ICC spaces as device colors), images and stencil
+masks (JPEG data is embedded as is), shadings of all types, tiling and
+shading patterns, filters (ASCIIHex, ASCII85, RunLength, LZW, Flate, DCT,
+CCITTFax, SubFile) and fonts: Type 1 (eexec, flex, hint replacement,
+seac), Type 3, Type 42, composite fonts (FMapType 2, 4, 5, 9 with CMaps)
+with CIDFontType 0 and 2 descendants. Fonts the program uses without
+embedding them (`/Helvetica findfont`) are taken from the system: the
+URW base 35 fonts for the standard names, then fontconfig families
+(glyph names go through the Adobe Glyph List). Like Pillow, the
+intrinsic size is the bounding box at one pixel per point (or the
+`%ImageData` size of Photoshop files). The interpreter was tested on the
+EPS files of TeX Live and on EPS files made by dvips, matplotlib, cairo
+and pdftops (levels 2 and 3) from PDF files, compared with the PDF
+files.
 
 **Fonts**: system fonts are discovered in the usual directories of Linux,
 macOS and Windows (plus `WEASYPRINT_FONT_PATH`) and matched with the CSS
@@ -293,7 +312,6 @@ here:
   of their fonts are applied like for simple scripts),
   hyphenation that changes letters (Hungarian "asz-szony"; see
   "Hyphenation that changes letters" below).
-* Images: EPS (Pillow reads it with Ghostscript).
 
 Not planned (WeasyPrint supports them, but they will not be implemented):
 
@@ -301,6 +319,18 @@ Not planned (WeasyPrint supports them, but they will not be implemented):
   with external programs).
 * PDF: the `debug` variant of `--pdf-variant` (link annotations on every
   id).
+
+EPS images differ on purpose: WeasyPrint gets them from Pillow, which
+has Ghostscript render them at 72 dpi on an opaque white background (and
+fails without Ghostscript); here they are vector graphics on a
+transparent background. Limitations of the interpreter: `strokepath` keeps
+the path instead of its outline, the masks of masked images (ImageType 3)
+are ignored, `restore` restores the graphics state but not the changes
+made to dictionaries and strings, the escape mappings of composite fonts
+(FMapType 3, 7, 8) are approximated and SubsVector mappings (FMapType 6)
+are not supported, and fonts that
+are neither embedded nor found on the system are replaced by Helvetica,
+Times or Courier (Ghostscript uses Courier).
 
 `--optimize-images` behaves differently on purpose: WeasyPrint re-encodes
 JPEG images with Pillow's default quality (75, or `--jpeg-quality`), which
@@ -545,4 +575,5 @@ tables in `internal/brotli` come from the Brotli reference implementation
 `internal/otl` comes from HarfBuzz (Old MIT, see
 `internal/otl/LICENSE.harfbuzz`); the BC6H/BC7 partition and bit
 layout tables in `internal/images/bc_tables.go` come from Pillow
-(MIT-CMU license).
+(MIT-CMU license); the glyph name table of `internal/ps` is generated from
+the Adobe Glyph List (BSD 3-Clause, see `internal/ps/LICENSE.agl`).

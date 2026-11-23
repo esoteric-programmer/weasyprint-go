@@ -32,9 +32,14 @@ type Image struct {
 	// Other images are decoded to 8-bit samples.
 	Pixels []byte // Components samples per pixel
 	Alpha  []byte // nil if opaque
+	// Stencil marks stencil masks (Pixels: one byte per pixel, non-zero
+	// where the fill color is painted).
+	Stencil bool
 
 	// SVG images.
 	SVG *SVG
+	// EPS images.
+	EPS *EPS
 
 	// Ref caches the PDF object reference once written.
 	Ref any
@@ -47,6 +52,11 @@ type Image struct {
 
 // IntrinsicSize returns the intrinsic size in CSS px.
 func (im *Image) IntrinsicSize() (float64, float64, bool) {
+	if im.EPS != nil {
+		// Like Pillow, which renders EPS files at 72 dpi: one pixel per
+		// point of the bounding box.
+		return float64(im.EPS.Size[0]), float64(im.EPS.Size[1]), true
+	}
 	if im.SVG != nil {
 		return im.SVG.Width, im.SVG.Height, im.SVG.Width > 0 && im.SVG.Height > 0
 	}
@@ -83,6 +93,16 @@ func Decode(data []byte, mimeType, url string) (*Image, error) {
 			return nil, err
 		}
 		return Decode(plain, mimeType, url)
+	}
+	if IsEPS(data) {
+		e, err := ParseEPS(data)
+		if err != nil {
+			return nil, err
+		}
+		if e.Size[0] <= 0 || e.Size[1] <= 0 {
+			return nil, errors.New("eps: empty bounding box")
+		}
+		return &Image{URL: url, EPS: e, Width: e.Size[0], Height: e.Size[1]}, nil
 	}
 	trimmed := bytes.TrimSpace(data)
 	if strings.Contains(mimeType, "svg") || bytes.HasPrefix(trimmed, []byte("<svg")) || (bytes.HasPrefix(trimmed, []byte("<?xml")) && bytes.Contains(data[:min(len(data), 1024)], []byte("<svg"))) {

@@ -11,6 +11,7 @@ import (
 	"github.com/esoteric-programmer/weasyprint-go/internal/images"
 	"github.com/esoteric-programmer/weasyprint-go/internal/layout"
 	"github.com/esoteric-programmer/weasyprint-go/internal/pdf"
+	"github.com/esoteric-programmer/weasyprint-go/internal/ps"
 	"github.com/esoteric-programmer/weasyprint-go/internal/text"
 )
 
@@ -124,6 +125,9 @@ type Renderer struct {
 	// colorSpaceRefs are the color spaces used in the document.
 	colorSpaceRefs map[string]pdf.Ref
 	forms          *formState
+	// EPS images: form XObjects and shadings.
+	epsForms   map[*images.Image]*epsForm
+	psShadings map[*ps.Shading]pdf.Ref
 }
 
 // Write renders pages to w as a PDF file.

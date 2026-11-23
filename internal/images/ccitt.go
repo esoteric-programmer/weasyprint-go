@@ -333,3 +333,9 @@ func peekIs(r *faxReader, bits string, _ *uint32, _ *bool) bool {
 	r.pos += len(bits)
 	return true
 }
+
+// DecodeFax decodes CCITT fax data (compression 2: modified Huffman, 3:
+// T.4 with options bit 0 for 2D, 4: T.6) into rows of pixels, 1 for black.
+func DecodeFax(data []byte, width, height, compression, options int) ([][]byte, error) {
+	return decodeFax(data, width, height, compression, options)
+}

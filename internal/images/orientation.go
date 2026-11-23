@@ -123,7 +123,7 @@ func exifTransform(o int) (angle int, flip bool) {
 // Oriented returns the image transformed by o, or im itself when nothing
 // changes.
 func (im *Image) Oriented(o Orientation) *Image {
-	if im == nil || im.SVG != nil {
+	if im == nil || im.SVG != nil || im.EPS != nil {
 		return im
 	}
 	angle, flip := o.Angle, o.Flip

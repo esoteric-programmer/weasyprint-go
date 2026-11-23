@@ -79,6 +79,9 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 	pixels, alpha, jpegData := im.Pixels, im.Alpha, im.JPEG
 	comps, invert := im.Components, im.InvertCMYK
 	quality := r.opts.JPEGQuality
+	if im.Stencil {
+		ratio = 1
+	}
 	if ratio < 1 || (jpegData != nil && quality > 0) {
 		if jpegData != nil && comps == 4 {
 			// Go's JPEG encoder only writes RGB: CMYK images are kept as
@@ -112,6 +115,27 @@ func (r *Renderer) imageObject(im *images.Image, interpolate bool, ratio float64
 			}
 			width, height = w, h
 		}
+	}
+	if im.Stencil {
+		// Stencil mask (EPS imagemask): 0 bits paint.
+		rb := (width + 7) / 8
+		data := make([]byte, rb*height)
+		for i := range data {
+			data[i] = 0xff
+		}
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				if pixels[y*width+x] != 0 {
+					data[y*rb+x/8] &^= 0x80 >> (x % 8)
+				}
+			}
+		}
+		d := pdf.Dict{"Type": pdf.Name("XObject"), "Subtype": pdf.Name("Image"), "Width": width, "Height": height,
+			"ImageMask": true, "BitsPerComponent": 1}
+		if interpolate {
+			d["Interpolate"] = true
+		}
+		return &pdf.Stream{Dict: d, Data: data, Compress: true}
 	}
 	d := pdf.Dict{
 		"Type":             pdf.Name("XObject"),
@@ -266,6 +290,10 @@ func (cv *canvas) paintImage(im *images.Image, x, y, w, h float64) {
 	}
 	if im.SVG != nil {
 		cv.drawSVG(im.SVG, x, y, w, h)
+		return
+	}
+	if im.EPS != nil {
+		cv.drawEPS(im, x, y, w, h)
 		return
 	}
 	ref := cv.r.imageRef(im, true)

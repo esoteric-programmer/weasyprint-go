@@ -164,7 +164,9 @@ func (b *bounds) add(x, y float64) {
 }
 
 // run interprets the Type 2 charstring of glyph g, adding its points to b.
-func (c *cffData) run(g int, b *bounds) bool {
+func (c *cffData) run(g int, b *bounds) bool { return c.runPath(g, b, nil) }
+
+func (c *cffData) runPath(g int, b *bounds, path *[]OutlineSeg) bool {
 	cs := indexItem(c.cff, c.charStrings, g)
 	if cs == nil {
 		return false
@@ -177,7 +179,7 @@ func (c *cffData) run(g int, b *bounds) bool {
 	if fd < len(c.lsubrs) {
 		lsubrs = c.lsubrs[fd]
 	}
-	in := &t2interp{c: c, lsubrs: lsubrs, b: b}
+	in := &t2interp{c: c, lsubrs: lsubrs, b: b, path: path}
 	if lsubrs >= 0 {
 		n, _, _ := indexInfo(c.cff, lsubrs)
 		in.lbias = subrBias(n)
@@ -189,6 +191,7 @@ func (c *cffData) run(g int, b *bounds) bool {
 }
 
 type t2interp struct {
+	path         *[]OutlineSeg // collects the outline when not nil
 	c            *cffData
 	lsubrs       int
 	lbias, gbias int
@@ -210,6 +213,12 @@ func (t *t2interp) moveTo(dx, dy float64) {
 	t.x += dx
 	t.y += dy
 	t.open = true
+	if t.path != nil {
+		if n := len(*t.path); n > 0 && (*t.path)[n-1].Op != 'Z' {
+			*t.path = append(*t.path, OutlineSeg{Op: 'Z'})
+		}
+		*t.path = append(*t.path, OutlineSeg{Op: 'M', P: [3][2]float64{{t.x, t.y}}})
+	}
 }
 
 func (t *t2interp) lineTo(dx, dy float64) {
@@ -220,6 +229,9 @@ func (t *t2interp) lineTo(dx, dy float64) {
 	t.x += dx
 	t.y += dy
 	t.point(t.x, t.y)
+	if t.path != nil {
+		*t.path = append(*t.path, OutlineSeg{Op: 'L', P: [3][2]float64{{t.x, t.y}}})
+	}
 }
 
 func (t *t2interp) curveTo(dx1, dy1, dx2, dy2, dx3, dy3 float64) {
@@ -233,6 +245,9 @@ func (t *t2interp) curveTo(dx1, dy1, dx2, dy2, dx3, dy3 float64) {
 	t.point(x1, y1)
 	t.point(x2, y2)
 	t.point(t.x, t.y)
+	if t.path != nil {
+		*t.path = append(*t.path, OutlineSeg{Op: 'C', P: [3][2]float64{{x1, y1}, {x2, y2}, {t.x, t.y}}})
+	}
 }
 
 func (t *t2interp) stems() {
