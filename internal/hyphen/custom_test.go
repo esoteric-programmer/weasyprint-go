@@ -81,3 +81,52 @@ func TestCustomRules(t *testing.T) {
 		t.Error("unterminated \\patterns accepted")
 	}
 }
+
+func TestRuleLayers(t *testing.T) {
+	// A list built into a program, the user's global configuration and a
+	// document's: later layers win, earlier entries they do not redefine
+	// stay, and rules for "de" also apply to "de-CH".
+	program := Rules{Lang: "de", Exceptions: []byte("Ur-instinkt Wea-sy-print Sil-bentrennung")}
+	global := Rules{Lang: "de", Exceptions: []byte("Urin-stinkt Weasy-print"), Left: 3}
+	document := Rules{Lang: "de-CH", Exceptions: []byte("Ur-in-stinkt")}
+	set, err := NewSet([]Rules{program, global, document}, TeX, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ lang, word, want string }{
+		{"de", "Urinstinkt", "Urin-stinkt"},         // global over program
+		{"de-CH", "Urinstinkt", "Ur-in-stinkt"},     // document over global
+		{"de-CH", "Weasyprint", "Weasy-print"},      // global, kept in the document's layer
+		{"de", "Silbentrennung", "Sil-bentrennung"}, // program, kept
+		{"de", "Druckerei", "Dru-cke-rei"},          // built-in patterns
+		{"de-AT", "Weasyprint", "Weasy-print"},      // "de" layers only
+	} {
+		d := set.Lookup(c.lang, TeX)
+		var b strings.Builder
+		runes := []rune(c.word)
+		last := 0
+		for _, p := range d.Positions(c.word, 1, 1) {
+			b.WriteString(string(runes[last:p]) + "-")
+			last = p
+		}
+		b.WriteString(string(runes[last:]))
+		if got := b.String(); got != c.want {
+			t.Errorf("%s %s: got %s, want %s", c.lang, c.word, got, c.want)
+		}
+	}
+	if d := set.Lookup("de", TeX); d.Left != 3 || d.MinWord != 5 {
+		t.Errorf("limits: left %d, min word %d", d.Left, d.MinWord)
+	}
+	// Replace drops the built-in patterns and the earlier layers.
+	rep, err := NewSet([]Rules{global, {Lang: "de", Exceptions: []byte("Ur-instinkt"), Replace: true}}, TeX, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := rep.Lookup("de", TeX)
+	if got := d.Hyphenate("Weasyprint"); got != "Weasyprint" {
+		t.Errorf("replace kept an earlier layer: %s", got)
+	}
+	if got := d.Hyphenate("Urinstinkt"); got != "Ur-instinkt" {
+		t.Errorf("replace layer: %s", got)
+	}
+}

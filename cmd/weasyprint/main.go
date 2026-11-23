@@ -89,9 +89,9 @@ func main() {
 	hinting := c.boolean("", "hinting", "keep hinting information in embedded fonts")
 	cache := c.str("c", "cache-folder", "", "store remote resources in a folder to reuse them in later renderings")
 	hyphenation := c.str("", "hyphenation", "tex", "built-in hyphenation patterns: tex (LaTeX's, the default)\nor pyphen (the Hunspell patterns used by WeasyPrint)")
-	hyphPatterns := c.multi("", "hyphenation-patterns", "LANG=FILE: hyphenation patterns added to the built-in ones of a language\n(TeX \\patterns file, Hunspell .dic or pattern list; may be repeated)")
+	hyphPatterns := c.multi("", "hyphenation-patterns", "LANG=FILE: hyphenation patterns added to the built-in ones of a language\n(TeX \\patterns file, Hunspell .dic or pattern list; may be repeated:\nlater files win)")
 	hyphReplace := c.multi("", "hyphenation-replace", "LANG: user patterns replace the built-in patterns and exceptions\nof a language instead of extending them (may be repeated)")
-	hyphExceptions := c.multi("", "hyphenation-exceptions", "LANG=FILE: hyphenation exceptions (\"as-so-ciate\") added for a language\n(may be repeated)")
+	hyphExceptions := c.multi("", "hyphenation-exceptions", "LANG=FILE: hyphenation exceptions (\"as-so-ciate\") added for a language\n(may be repeated: later files win)")
 	hyphMins := c.multi("", "hyphenation-min", "LANG=LEFT,RIGHT: minimum characters before and after a hyphen\nfor a language (may be repeated)")
 	pageSize := c.str("", "page-size", "", "page size of all pages, overriding the document's CSS\n(\"A4\", \"A5 landscape\", \"letter\", \"210mm 297mm\"...)")
 	// Input.
@@ -229,11 +229,22 @@ func main() {
 	default:
 		fail(2, fmt.Sprintf("invalid --hyphenation %q (choose from tex, pyphen)", *hyphenation))
 	}
+	// Each file is a layer of its own, in the order given (patterns, then
+	// exceptions); --hyphenation-replace and --hyphenation-min go to the
+	// first layer of the language.
 	rule := func(lang string) *weasyprint.HyphenationRules {
 		for i := range opts.HyphenationRules {
 			if strings.EqualFold(opts.HyphenationRules[i].Lang, lang) {
 				return &opts.HyphenationRules[i]
 			}
+		}
+		opts.HyphenationRules = append(opts.HyphenationRules, weasyprint.HyphenationRules{Lang: lang})
+		return &opts.HyphenationRules[len(opts.HyphenationRules)-1]
+	}
+	layer := func(lang string) *weasyprint.HyphenationRules {
+		first := rule(lang)
+		if first.PatternsFile == "" && first.ExceptionsFile == "" {
+			return first
 		}
 		opts.HyphenationRules = append(opts.HyphenationRules, weasyprint.HyphenationRules{Lang: lang})
 		return &opts.HyphenationRules[len(opts.HyphenationRules)-1]
@@ -245,16 +256,16 @@ func main() {
 		}
 		return v[:i], v[i+1:]
 	}
-	for _, v := range *hyphPatterns {
-		lang, file := langValue("hyphenation-patterns", v)
-		rule(lang).PatternsFile = file
-	}
 	for _, lang := range *hyphReplace {
 		rule(lang).Replace = true
 	}
+	for _, v := range *hyphPatterns {
+		lang, file := langValue("hyphenation-patterns", v)
+		layer(lang).PatternsFile = file
+	}
 	for _, v := range *hyphExceptions {
 		lang, file := langValue("hyphenation-exceptions", v)
-		rule(lang).ExceptionsFile = file
+		layer(lang).ExceptionsFile = file
 	}
 	for _, v := range *hyphMins {
 		lang, mins := langValue("hyphenation-min", v)

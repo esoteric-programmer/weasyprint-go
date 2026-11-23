@@ -177,8 +177,14 @@ type Options struct {
 	// "hyphens: auto".
 	Hyphenation Hyphenation
 	// HyphenationRules are user-defined hyphenation patterns and
-	// exceptions, which replace or extend the built-in ones of their
-	// languages.
+	// exceptions, which extend (or replace) the built-in ones of their
+	// languages. They are layers applied in order, later ones winning:
+	// for example a list built into the program, then the user's global
+	// configuration, then the document's. For each language, a layer
+	// keeps what the layers before it define and overrides the patterns
+	// (for the same letters), the exception words and the limits it
+	// defines itself; a layer with Replace drops the built-in patterns and
+	// the layers before it.
 	HyphenationRules []HyphenationRules
 	// PDFOptions are used when writing the document as PDF.
 	PDFOptions
@@ -213,12 +219,14 @@ type HyphenationRules struct {
 	PatternsFile string
 	// Exceptions (or the file ExceptionsFile) are words with their
 	// hyphenation points ("as-so-ciate"; a word without hyphens is never
-	// hyphenated), added to the built-in exceptions; for a word in both,
-	// the user's points are used.
+	// hyphenated), added to the built-in exceptions and those of the
+	// layers before; for a word in several lists, the last one's points
+	// are used. The patterns of a layer are applied before its
+	// exceptions.
 	Exceptions     []byte
 	ExceptionsFile string
-	// Replace drops the built-in patterns and exceptions of the language
-	// instead of extending them.
+	// Replace drops the built-in patterns and exceptions of the language,
+	// and those of the layers before, instead of extending them.
 	Replace bool
 	// Left and Right, if positive, set the minimum numbers of characters
 	// before and after a hyphen used for hyphenate-limit-chars: auto.

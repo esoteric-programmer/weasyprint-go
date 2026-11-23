@@ -111,3 +111,20 @@ func TestHyphenateWord(t *testing.T) {
 		t.Errorf("xx: %+v", r)
 	}
 }
+
+func TestHyphenationRuleLayers(t *testing.T) {
+	// A program's list, the user's global configuration and the
+	// document's configuration, in that order: later lists win.
+	opts := &Options{HyphenationRules: []HyphenationRules{
+		{Lang: "en", Exceptions: []byte("weasy-print ta-ble")},
+		{Lang: "en", Exceptions: []byte("weasyp-rint")},
+		{Lang: "en-GB", Exceptions: []byte("weas-yprint")},
+	}}
+	for _, c := range [][3]string{{"Weasyprint", "en", "Weasyp-rint"}, {"Weasyprint", "en-GB", "Weas-yprint"},
+		{"table", "en-GB", "ta-ble"}, {"hyphenation", "en", "hy-phen-ation"}} {
+		r, err := HyphenateWord(c[0], c[1], opts)
+		if err != nil || r.Hyphenated != c[2] {
+			t.Errorf("%s (%s): %+v %v, want %s", c[0], c[1], r, err, c[2])
+		}
+	}
+}

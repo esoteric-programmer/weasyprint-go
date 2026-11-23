@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -12,7 +13,8 @@ import (
 // Rules are user-defined hyphenation rules for a language.
 type Rules struct {
 	// Lang is the BCP 47 language tag the rules apply to ("de",
-	// "de-CH-1901", "en-GB"…); more specific tags win.
+	// "de-CH-1901", "en-GB"…); they also apply to more specific tags
+	// ("de" rules to "de-CH").
 	Lang string
 	// Patterns are added to the built-in patterns of the language; a
 	// pattern for the same letters as a built-in one replaces it.
@@ -24,10 +26,11 @@ type Rules struct {
 	// Exceptions are words with their hyphenation points ("as-so-ciate";
 	// a word without hyphens is never hyphenated), one per line or
 	// separated by spaces, or a TeX \hyphenation{…} list. They are added
-	// to the built-in exceptions; a word in both uses the user's points.
+	// to the built-in exceptions and those of earlier rules; a word in
+	// several lists uses the points of the last one.
 	Exceptions []byte
-	// Replace makes Patterns replace the built-in patterns and
-	// exceptions instead of extending them.
+	// Replace drops the built-in patterns and exceptions and those of
+	// earlier rules for the language, instead of extending them.
 	Replace bool
 	// Left and Right, if positive, are the minimum numbers of characters
 	// before and after a hyphen for hyphenate-limit-chars: auto
@@ -37,53 +40,51 @@ type Rules struct {
 
 // Set holds the user-defined rules of a render, in front of the built-in
 // patterns. The zero value and nil use the built-in patterns only.
+//
+// Rules are layers applied in order: the built-in patterns, then each
+// rule whose language is the looked-up tag or a prefix of it ("de" for
+// "de-CH"), in the order given. A later layer wins for the same pattern
+// letters, the same exception word and the limits; entries of earlier
+// layers that it does not redefine stay. A rule with Replace starts over:
+// the built-in patterns and the earlier rules are dropped.
 type Set struct {
-	dicts map[string]*Dict // lowercase tag with "-" separators
+	rules []parsedRule
+	mu    sync.Mutex
+	cache map[string]*Dict // by tag and source
+}
+
+type parsedRule struct {
+	tag         string
+	patterns    *Dict // user patterns (and \hyphenation exceptions), or nil
+	exceptions  *Dict // exception list, or nil
+	replace     bool
+	left, right int
 }
 
 // NewSet builds a set of rules; parse problems are reported to warn.
 func NewSet(rules []Rules, src Source, warn func(string)) (*Set, error) {
-	s := &Set{dicts: map[string]*Dict{}}
+	s := &Set{cache: map[string]*Dict{}}
 	for _, r := range rules {
 		tag := normTag(r.Lang)
 		if tag == "" {
 			return nil, errors.New("hyphenation rules without language")
 		}
-		// The dictionary to extend: earlier rules for the tag, else the
-		// built-in one (copied: the built-in dictionaries are shared).
-		d := s.dicts[tag]
-		if d == nil || r.Replace {
-			if base := Lookup(r.Lang, src); base != nil && !r.Replace {
-				d = base.clone()
-				d.Name = base.Name + " + user rules"
-			} else {
-				d = newDict()
-				d.Left, d.Right, d.MinWord = 2, 2, 4
-				d.Name = "user rules"
-			}
-		}
+		pr := parsedRule{tag: tag, replace: r.Replace, left: r.Left, right: r.Right}
 		if len(r.Patterns) > 0 {
 			ud, err := ParsePatterns(r.Patterns, warn)
 			if err != nil {
 				return nil, fmt.Errorf("hyphenation patterns for %s: %w", r.Lang, err)
 			}
-			d.merge(ud)
+			pr.patterns = ud
 		}
 		if len(r.Exceptions) > 0 {
-			if err := d.AddExceptions(r.Exceptions); err != nil {
+			ed := newDict()
+			if err := ed.AddExceptions(r.Exceptions); err != nil {
 				return nil, fmt.Errorf("hyphenation exceptions for %s: %w", r.Lang, err)
 			}
+			pr.exceptions = ed
 		}
-		if r.Left > 0 {
-			d.Left = r.Left
-		}
-		if r.Right > 0 {
-			d.Right = r.Right
-		}
-		if r.Left > 0 || r.Right > 0 {
-			d.MinWord = d.Left + d.Right
-		}
-		s.dicts[tag] = d
+		s.rules = append(s.rules, pr)
 	}
 	return s, nil
 }
@@ -92,18 +93,61 @@ func normTag(lang string) string {
 	return strings.Trim(strings.ToLower(strings.ReplaceAll(lang, "_", "-")), "-")
 }
 
-// Lookup returns the dictionary of a language tag: user rules for the
-// tag or a prefix of it, else the built-in patterns.
+// Lookup returns the dictionary of a language tag: the built-in patterns
+// with the layers of user rules that apply to the tag.
 func (s *Set) Lookup(lang string, src Source) *Dict {
-	if s != nil && len(s.dicts) > 0 {
-		parts := strings.Split(normTag(lang), "-")
-		for n := len(parts); n > 0; n-- {
-			if d, ok := s.dicts[strings.Join(parts[:n], "-")]; ok {
-				return d
+	if s == nil || len(s.rules) == 0 {
+		return Lookup(lang, src)
+	}
+	tag := normTag(lang)
+	var layers []*parsedRule
+	for i := range s.rules {
+		r := &s.rules[i]
+		if r.tag == tag || strings.HasPrefix(tag, r.tag+"-") {
+			if r.replace {
+				layers = layers[:0]
 			}
+			layers = append(layers, r)
 		}
 	}
-	return Lookup(lang, src)
+	if len(layers) == 0 {
+		return Lookup(lang, src)
+	}
+	key := fmt.Sprintf("%s\x00%d", tag, src)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d, ok := s.cache[key]; ok {
+		return d
+	}
+	var d *Dict
+	if base := Lookup(lang, src); base != nil && !layers[0].replace {
+		// Copied: the built-in dictionaries are shared.
+		d = base.clone()
+		d.Name = base.Name + " + user rules"
+	} else {
+		d = newDict()
+		d.Left, d.Right, d.MinWord = 2, 2, 4
+		d.Name = "user rules"
+	}
+	for _, r := range layers {
+		if r.patterns != nil {
+			d.merge(r.patterns)
+		}
+		if r.exceptions != nil {
+			d.merge(r.exceptions)
+		}
+		if r.left > 0 {
+			d.Left = r.left
+		}
+		if r.right > 0 {
+			d.Right = r.right
+		}
+		if r.left > 0 || r.right > 0 {
+			d.MinWord = d.Left + d.Right
+		}
+	}
+	s.cache[key] = d
+	return d
 }
 
 func newDict() *Dict {
@@ -152,7 +196,9 @@ func (d *Dict) merge(u *Dict) {
 	if u.Right > 0 {
 		d.Right = u.Right
 	}
-	d.MinWord = d.Left + d.Right
+	if u.Left > 0 || u.Right > 0 {
+		d.MinWord = d.Left + d.Right
+	}
 	d.cache = map[string][]int{}
 }
 

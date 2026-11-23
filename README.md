@@ -42,8 +42,8 @@ Options (the same as WeasyPrint's CLI, plus `--page-size` and
 | `-e`, `--encoding ENC` | Input character encoding |
 | `-p`, `--presentational-hints` | Follow HTML presentational hints (`align`, `bgcolor`, `width`…) |
 | `--page-size SIZE` | Page size of all pages, overriding the document's CSS: a CSS `size` value such as `A4`, `A5 landscape`, `letter`, `210mm 297mm` (not in WeasyPrint, where `-s` with `@page { size: … }` does the same) |
-| `--hyphenation-patterns LANG=FILE` | Hyphenation patterns added to the built-in ones of a language (user patterns win for the same letters): a TeX file with `\patterns{…}` (and `\hyphenation{…}`), a Hunspell `.dic` file or a pattern list (may be repeated) |
-| `--hyphenation-exceptions LANG=FILE` | Hyphenation exceptions (`as-so-ciate`; a word without hyphens is never hyphenated) added to the built-in ones of a language; for words in both, the user's points are used (may be repeated) |
+| `--hyphenation-patterns LANG=FILE` | Hyphenation patterns added to the built-in ones of a language (user patterns win for the same letters): a TeX file with `\patterns{…}` (and `\hyphenation{…}`), a Hunspell `.dic` file or a pattern list (may be repeated: later files win) |
+| `--hyphenation-exceptions LANG=FILE` | Hyphenation exceptions (`as-so-ciate`; a word without hyphens is never hyphenated) added to the built-in ones of a language; for words in both, the user's points are used (may be repeated: for a word in several files, the last file wins) |
 | `--hyphenation-replace LANG` | User patterns replace the built-in patterns and exceptions of the language instead of extending them (may be repeated) |
 | `--hyphenation-min LANG=LEFT,RIGHT` | Minimum characters before and after a hyphen for a language (`\lefthyphenmin`, `\righthyphenmin`; may be repeated) |
 | `--hyphenation PATTERNS` | Built-in hyphenation patterns: `tex` (default, LaTeX's patterns, see below) or `pyphen` (the Hunspell patterns WeasyPrint uses) |
@@ -95,7 +95,13 @@ a CSS page size for it. `Options.Hyphenation` selects the
 built-in hyphenation patterns (`HyphenationTeX`, the default, or
 `HyphenationPyphen`); `Options.HyphenationRules` adds user-defined
 patterns and exceptions per language, from files or from memory, to the
-built-in ones (the user's entries win; `Replace` drops the built-in ones).
+built-in ones. The rules are layers applied in order, so that a program
+can combine, for instance, its own built-in list, the user's global
+configuration and a document's configuration: for each language (rules
+for "de" also apply to "de-CH"), a later layer wins for the same
+exception word, the same pattern letters and the limits, and keeps the
+entries of the earlier layers it doesn't redefine; `Replace` drops the
+built-in patterns and the earlier layers.
 For debugging, `weasyprint.HyphenateWord(word, lang, opts)` returns how
 `hyphens: auto` hyphenates a word with these options: the positions
 (character offsets), the hyphenated word ("Sil-ben-tren-nung"), the
