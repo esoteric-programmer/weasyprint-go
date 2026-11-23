@@ -18,6 +18,7 @@ import (
 	"compress/gzip"
 	"embed"
 	"io"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -206,6 +207,12 @@ func cached(file string, init func(*Dict)) *Dict {
 	d := loadDict(file, strings.HasPrefix(file, "dictionaries/"))
 	if d != nil {
 		init(d)
+		d.Name = strings.TrimSuffix(path.Base(file), ".gz")
+		if strings.HasPrefix(file, "tex/") {
+			d.Name = "TeX " + strings.TrimSuffix(d.Name, ".txt")
+		} else {
+			d.Name = "Pyphen " + d.Name
+		}
 	}
 	dicts[file] = d
 	return d
@@ -222,6 +229,9 @@ type Dict struct {
 	// and after a hyphen, MinWord the default minimum word length (used
 	// for "hyphenate-limit-chars: auto").
 	Left, Right, MinWord int
+	// Name describes the patterns (for debugging): the file of the
+	// built-in patterns, with "+ user rules" when extended.
+	Name string
 
 	patterns   map[string]pattern
 	exceptions map[string][]int
@@ -463,6 +473,13 @@ func (d *Dict) Positions(word string, left, right int) []int {
 		}
 	}
 	return out
+}
+
+// IsException reports whether a word is in the exception list (its
+// points do not come from the patterns).
+func (d *Dict) IsException(word string) bool {
+	_, ok := d.exceptions[strings.ToLower(word)]
+	return ok
 }
 
 // Hyphenate returns word with hyphens at its hyphenation points, using

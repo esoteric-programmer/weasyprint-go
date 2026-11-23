@@ -88,3 +88,26 @@ func TestHyphenationRules(t *testing.T) {
 		t.Errorf("exception: %d lines", n)
 	}
 }
+
+func TestHyphenateWord(t *testing.T) {
+	r, err := HyphenateWord("Silbentrennung", "de", nil)
+	if err != nil || r.Hyphenated != "Sil-ben-tren-nung" || len(r.Positions) != 3 || r.Positions[0] != 3 ||
+		r.Dictionary == "" || r.Left != 2 {
+		t.Errorf("de: %+v %v", r, err)
+	}
+	// Parts between non-letters are hyphenated separately.
+	r, _ = HyphenateWord("e-mail-Adresse", "de", nil)
+	if len(r.Positions) != 1 || r.Positions[0] != 12 {
+		t.Errorf("e-mail-Adresse: %+v", r)
+	}
+	// User exceptions.
+	r, err = HyphenateWord("Weasyprint", "en", &Options{HyphenationRules: []HyphenationRules{{Lang: "en", Exceptions: []byte("weasy-print")}}})
+	if err != nil || r.Hyphenated != "Weasy-print" || len(r.Exceptions) != 1 || !strings.HasSuffix(r.Dictionary, "+ user rules") {
+		t.Errorf("exception: %+v %v", r, err)
+	}
+	// No patterns.
+	r, _ = HyphenateWord("word", "xx", nil)
+	if r.Dictionary != "" || len(r.Positions) != 0 || r.Hyphenated != "word" {
+		t.Errorf("xx: %+v", r)
+	}
+}

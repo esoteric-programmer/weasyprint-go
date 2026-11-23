@@ -55,9 +55,11 @@ func NewSet(rules []Rules, src Source, warn func(string)) (*Set, error) {
 		if d == nil || r.Replace {
 			if base := Lookup(r.Lang, src); base != nil && !r.Replace {
 				d = base.clone()
+				d.Name = base.Name + " + user rules"
 			} else {
 				d = newDict()
 				d.Left, d.Right, d.MinWord = 2, 2, 4
+				d.Name = "user rules"
 			}
 		}
 		if len(r.Patterns) > 0 {
@@ -110,7 +112,7 @@ func newDict() *Dict {
 
 // clone returns a copy of d (patterns and exceptions copied on write).
 func (d *Dict) clone() *Dict {
-	return &Dict{Left: d.Left, Right: d.Right, MinWord: d.MinWord, patterns: d.patterns,
+	return &Dict{Left: d.Left, Right: d.Right, MinWord: d.MinWord, Name: d.Name, patterns: d.patterns,
 		exceptions: d.exceptions, maxLen: d.maxLen, cache: map[string][]int{}, shared: true}
 }
 
